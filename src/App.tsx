@@ -21,6 +21,7 @@ import {
   Sparkles, 
   Settings, 
   ChevronRight, 
+  ChevronDown,
   Check, 
   FileSpreadsheet, 
   Maximize2, 
@@ -100,6 +101,8 @@ export default function App() {
   const [showCsvBox, setShowCsvBox] = useState<boolean>(false);
   const [showPrintView, setShowPrintView] = useState<boolean>(false);
   const [showHolidaysEditor, setShowHolidaysEditor] = useState<boolean>(false);
+  const [showAdvancedSetup, setShowAdvancedSetup] = useState<boolean>(false);
+  const [activeSetupTab, setActiveSetupTab] = useState<'profile' | 'cloud' | 'holidays' | 'imports'>('profile');
   
   // --- Rich Custom Entry Builder State ---
   const [showEntryBuilder, setShowEntryBuilder] = useState<boolean>(false);
@@ -110,6 +113,17 @@ export default function App() {
   const [builderRemarks, setBuilderRemarks] = useState<string>("-");
   const [builderMultiDaySelect, setBuilderMultiDaySelect] = useState<boolean>(false);
   const [builderSelectedDays, setBuilderSelectedDays] = useState<number[]>([]);
+  
+  // --- Smart Book Reading Planner States ---
+  const [isReadingPlanner, setIsReadingPlanner] = useState<boolean>(false);
+  const [plannerBookTitle, setPlannerBookTitle] = useState<string>("");
+  const [plannerStartPage, setPlannerStartPage] = useState<number>(1);
+  const [plannerEndPage, setPlannerEndPage] = useState<number>(150);
+  const [plannerExcludePages, setPlannerExcludePages] = useState<string>("");
+  const [plannerRandomize, setPlannerRandomize] = useState<boolean>(true);
+  const [plannerDescriptionStyle, setPlannerDescriptionStyle] = useState<string>("academic");
+  const [plannerCollisionResolution, setPlannerCollisionResolution] = useState<'skip' | 'overwrite' | 'parallel'>('parallel');
+  const [plannerPreviewPlan, setPlannerPreviewPlan] = useState<any[] | null>(null);
   
   // Bulk Selection State
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
@@ -510,6 +524,296 @@ export default function App() {
       remarks: "-"
     };
     setEntries([newEntry, ...entries]);
+  };
+
+  // --- Smart Reading Planner Helpers & Handlers ---
+  const parseExclusions = (excludeStr: string): Set<number> => {
+    const excluded = new Set<number>();
+    if (!excludeStr.trim()) return excluded;
+    
+    const parts = excludeStr.split(',');
+    for (let part of parts) {
+      part = part.trim();
+      if (part.includes('-')) {
+        const [startStr, endStr] = part.split('-');
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+        if (!isNaN(start) && !isNaN(end)) {
+          const first = Math.min(start, end);
+          const last = Math.max(start, end);
+          for (let i = first; i <= last; i++) {
+            excluded.add(i);
+          }
+        }
+      } else {
+        const val = parseInt(part, 10);
+        if (!isNaN(val)) {
+          excluded.add(val);
+        }
+      }
+    }
+    return excluded;
+  };
+
+  const formatPageRanges = (pages: number[]): string => {
+    if (pages.length === 0) return "None";
+    const ranges: string[] = [];
+    let start = pages[0];
+    let prev = pages[0];
+    
+    for (let i = 1; i <= pages.length; i++) {
+      const current = pages[i];
+      if (current === prev + 1) {
+        prev = current;
+      } else {
+        if (start === prev) {
+          ranges.push(`${start}`);
+        } else {
+          ranges.push(`${start}-${prev}`);
+        }
+        if (i < pages.length) {
+          start = current;
+          prev = current;
+        }
+      }
+    }
+    return `pp. ${ranges.join(', ')}`;
+  };
+
+  const generatePlannerDescription = (book: string, rangesText: string, style: string, isSlot2: boolean): string => {
+    const bookName = book.trim() || 'assigned text';
+    if (rangesText === "None") {
+      return `Conducted general literature search and reviews of academic papers related to "${bookName}".`;
+    }
+    if (isSlot2) {
+      switch (style) {
+        case 'academic':
+          return `Continued extensive critical text-analysis & conceptual review of "${bookName}" (${rangesText}), formulating annotations.`;
+        case 'analytical':
+          return `Drafted thematic analytical summaries and theoretical notes from "${bookName}" (${rangesText}) for chapter integration.`;
+        case 'detailed':
+          return `Advanced reading and bibliographical indexing of "${bookName}" (${rangesText}) focusing on key arguments.`;
+        case 'standard':
+        default:
+          return `Continued reading and studying of "${bookName}" (${rangesText}).`;
+      }
+    } else {
+      switch (style) {
+        case 'academic':
+          return `Conducted comprehensive primary literature reading and textual synthesis of "${bookName}" (${rangesText}).`;
+        case 'analytical':
+          return `Close logical mapping, chapter-by-chapter annotation, and methodology study of "${bookName}" (${rangesText}).`;
+        case 'detailed':
+          return `Initiated structured reading session for research thesis references in "${bookName}" (${rangesText}).`;
+        case 'standard':
+        default:
+          return `Read and reviewed chapters of "${bookName}" (${rangesText}).`;
+      }
+    }
+  };
+
+  const handleGenerateReadingPlanPreview = () => {
+    const sortedDays = [...builderSelectedDays].sort((a, b) => a - b);
+    const daysCount = sortedDays.length;
+    if (daysCount === 0) {
+      triggerAlert("Selection Error", "Please select targeted calendar days from the multi-day grid first!");
+      return;
+    }
+    if (!plannerBookTitle.trim()) {
+      triggerAlert("Validation Notice", "Please enter the book/resource title first!");
+      return;
+    }
+    if (plannerStartPage <= 0 || plannerEndPage <= 0) {
+      triggerAlert("Value Error", "Page numbers must be positive integers!");
+      return;
+    }
+    if (plannerEndPage < plannerStartPage) {
+      triggerAlert("Value Error", "End Page cannot be less than Start Page!");
+      return;
+    }
+
+    const allPages: number[] = [];
+    for (let p = plannerStartPage; p <= plannerEndPage; p++) {
+      allPages.push(p);
+    }
+    const excluded = parseExclusions(plannerExcludePages);
+    const validPages = allPages.filter(p => !excluded.has(p));
+    const N = validPages.length;
+    
+    if (N === 0) {
+      triggerAlert("Calculation Error", "No pages to read! Exclusions filtered out your entire page range.");
+      return;
+    }
+
+    const monthStr = String(selectedMonth + 1).padStart(2, '0');
+    const previewItems: any[] = [];
+
+    if (!plannerRandomize) {
+      // Even distribution over 2 * daysCount slots
+      const totalSlots = daysCount * 2;
+      let curr = 0;
+      for (let dayIdx = 0; dayIdx < daysCount; dayIdx++) {
+        const dayNum = sortedDays[dayIdx];
+        const dateStr = `${selectedYear}-${monthStr}-${String(dayNum).padStart(2, '0')}`;
+        
+        // Slot 1
+        const size1 = Math.floor(N / totalSlots) + ((dayIdx * 2) < (N % totalSlots) ? 1 : 0);
+        const s1Pages = validPages.slice(curr, curr + size1);
+        curr += size1;
+        
+        // Slot 2
+        const size2 = Math.floor(N / totalSlots) + ((dayIdx * 2 + 1) < (N % totalSlots) ? 1 : 0);
+        const s2Pages = validPages.slice(curr, curr + size2);
+        curr += size2;
+
+        const r1Text = formatPageRanges(s1Pages);
+        const r2Text = formatPageRanges(s2Pages);
+
+        previewItems.push({
+          day: dayNum,
+          dateStr,
+          slot: slot1Hours,
+          pages: s1Pages,
+          pagesText: r1Text,
+          description: generatePlannerDescription(plannerBookTitle, r1Text, plannerDescriptionStyle, false),
+          remarks: s1Pages.length > 0 ? r1Text : "-"
+        });
+
+        previewItems.push({
+          day: dayNum,
+          dateStr,
+          slot: slot2Hours,
+          pages: s2Pages,
+          pagesText: r2Text,
+          description: generatePlannerDescription(plannerBookTitle, r2Text, plannerDescriptionStyle, true),
+          remarks: s2Pages.length > 0 ? r2Text : "-"
+        });
+      }
+    } else {
+      // Randomized pages per day distribution
+      const daysChunks: number[][] = Array.from({ length: daysCount }, () => []);
+      if (N <= daysCount) {
+        for (let i = 0; i < N; i++) {
+          daysChunks[i] = [validPages[i]];
+        }
+      } else {
+        const availableIndices = Array.from({ length: N - 1 }, (_, i) => i + 1);
+        // Shuffle available indices
+        for (let i = availableIndices.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [availableIndices[i], availableIndices[j]] = [availableIndices[j], availableIndices[i]];
+        }
+        const cuts = availableIndices.slice(0, daysCount - 1).sort((a, b) => a - b);
+        const bounds = [0, ...cuts, N];
+        for (let i = 0; i < daysCount; i++) {
+          daysChunks[i] = validPages.slice(bounds[i], bounds[i + 1]);
+        }
+      }
+
+      for (let dayIdx = 0; dayIdx < daysCount; dayIdx++) {
+        const dayNum = sortedDays[dayIdx];
+        const dateStr = `${selectedYear}-${monthStr}-${String(dayNum).padStart(2, '0')}`;
+        const dayPages = daysChunks[dayIdx] || [];
+        const M = dayPages.length;
+
+        let s1Pages: number[] = [];
+        let s2Pages: number[] = [];
+
+        if (M === 1) {
+          if (Math.random() < 0.5) {
+            s1Pages = [dayPages[0]];
+          } else {
+            s2Pages = [dayPages[0]];
+          }
+        } else if (M >= 2) {
+          const cut = Math.floor(Math.random() * (M - 1)) + 1;
+          s1Pages = dayPages.slice(0, cut);
+          s2Pages = dayPages.slice(cut);
+        }
+
+        const r1Text = formatPageRanges(s1Pages);
+        const r2Text = formatPageRanges(s2Pages);
+
+        previewItems.push({
+          day: dayNum,
+          dateStr,
+          slot: slot1Hours,
+          pages: s1Pages,
+          pagesText: r1Text,
+          description: generatePlannerDescription(plannerBookTitle, r1Text, plannerDescriptionStyle, false),
+          remarks: s1Pages.length > 0 ? r1Text : "-"
+        });
+
+        previewItems.push({
+          day: dayNum,
+          dateStr,
+          slot: slot2Hours,
+          pages: s2Pages,
+          pagesText: r2Text,
+          description: generatePlannerDescription(plannerBookTitle, r2Text, plannerDescriptionStyle, true),
+          remarks: s2Pages.length > 0 ? r2Text : "-"
+        });
+      }
+    }
+
+    setPlannerPreviewPlan(previewItems);
+  };
+
+  const handleExecuteReadingPlan = () => {
+    if (!plannerPreviewPlan || plannerPreviewPlan.length === 0) {
+      triggerAlert("Empty Plan", "Please click 'Generate Preview Plan' first to build your logistics!");
+      return;
+    }
+
+    let finalEntries = [...entries];
+    let overwriteCount = 0;
+    let skipCount = 0;
+    let addedCount = 0;
+
+    const newLogs: LogEntry[] = [];
+
+    plannerPreviewPlan.forEach((item) => {
+      // If slot is empty of pages, don't write log line to keep template tidy
+      if (item.pages.length === 0) {
+        return;
+      }
+
+      const hasCollision = finalEntries.some(e => e.date === item.dateStr && e.timeSlot === item.slot);
+      
+      if (hasCollision) {
+        if (plannerCollisionResolution === 'skip') {
+          skipCount++;
+          return;
+        } else if (plannerCollisionResolution === 'overwrite') {
+          finalEntries = finalEntries.filter(e => !(e.date === item.dateStr && e.timeSlot === item.slot));
+          overwriteCount++;
+        }
+      }
+
+      newLogs.push({
+        id: `reading-${Date.now()}-${item.day}-${item.slot.replace(/[^0-9]/g, '')}-${Math.random().toString(36).substring(2, 5)}`,
+        date: item.dateStr,
+        timeSlot: item.slot,
+        activityType: "Reading",
+        description: item.description,
+        remarks: item.remarks
+      });
+      addedCount++;
+    });
+
+    setEntries([...newLogs, ...finalEntries]);
+    setPlannerPreviewPlan(null); // Clear preview plan
+    setPlannerBookTitle(""); // Clear book title
+    setPlannerExcludePages(""); // Clear exclusions
+    setBuilderSelectedDays([]); // Clear selected days
+    setIsReadingPlanner(false);
+    setShowEntryBuilder(false); // Close entry builder
+
+    let message = `Successfully populated ${addedCount} JRF reading logs for ${builderSelectedDays.length} days.`;
+    if (overwriteCount > 0) message += ` Overwrote ${overwriteCount} colliding entries.`;
+    if (skipCount > 0) message += ` Skipped ${skipCount} colliding entries.`;
+    
+    triggerAlert("Logbook Populated", message);
   };
 
   // Feature-rich customized log entry creator supporting multiple days & collision awareness
@@ -946,7 +1250,7 @@ export default function App() {
               </h1>
               <p className="text-xs text-gray-400 font-mono flex items-center gap-3">
                 <span>Saurashtra University, Rajkot</span>
-                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider bg-blue-500/10 px-2 py-0.5 rounded">By Harwin Popat</span>
+                <span className="text-[11px] font-bold text-blue-400 uppercase tracking-wider bg-blue-500/10 px-2 py-0.5 rounded">By Harwin Popat</span>
               </p>
             </div>
           </div>
@@ -997,619 +1301,674 @@ export default function App() {
         {/* Main Content Dashboard */}
         <main id="app-main-content" className="w-full max-w-7xl mx-auto px-4 lg:px-8 py-6 flex flex-col gap-6">
 
-          {/* --- Multi-Device Cloud Backup & Synchronization Panel --- */}
-          <section id="multi-device-backup-panel" className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 md:p-6 shadow-sm flex flex-col md:flex-row items-stretch justify-between gap-6 relative overflow-hidden">
-            {/* Subtle background glow when syncing or active */}
-            {user && (
-              <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
-            )}
-            
-            {/* Left side info */}
-            <div className="flex-1 flex flex-col justify-between space-y-4">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <div className={`p-1.5 rounded-lg ${user ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                    <Cloud className="w-5 h-5" />
-                  </div>
-                  <h2 className="text-sm font-bold tracking-tight text-white font-display uppercase flex items-center gap-2">
-                    <span>Cloud Multi-Device Synchronization</span>
-                    {user && (
-                      <span className="text-[10px] lowercase font-normal bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-mono">
-                        active
-                      </span>
-                    )}
-                  </h2>
-                </div>
-                <p className="text-xs text-gray-400 leading-relaxed font-sans max-w-2xl">
-                  {user 
-                    ? "Your scholar profile, monthly log entries, custom holidays, and calendar settings are automatically backed up in real-time. Any changes made here sync instantly, allowing you to seamlessly fill and view your logs on another device."
-                    : "Want to fill and view your monthly JRF work log entries across multiple devices without losing data? Simply register a free account to instantly back up, store, and synchronize your spreadsheet in the cloud."
-                  }
-                </p>
-              </div>
-
-              {user ? (
-                /* Authenticated Status Indicators */
-                <div className="flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-gray-300 font-sans">
-                  <div>
-                    <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-semibold">Logged In Account</span>
-                    <strong className="text-[#3b82f6]">{user.email}</strong>
+          {/* --- Standard Active Period & Template Builder --- */}
+          <section id="calendar-settings-panel" className="bg-[#15171C] border border-[#2A2D35] rounded-2xl shadow-sm p-4 md:p-5">
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-5">
+              {/* Year/Month selectors and Month stats */}
+              <div className="flex-1 flex flex-col md:flex-row items-stretch md:items-center gap-4">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="p-2 bg-blue-500/10 text-blue-400 rounded-xl">
+                    <CalendarIcon className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-semibold">Synchronization</span>
-                    <span className="flex items-center gap-1.5">
-                      {cloudSyncStatus === 'saving' ? (
-                        <>
-                          <RefreshCw className="w-3 h-3 text-blue-400 animate-spin" />
-                          <span className="text-blue-400 font-semibold font-mono animate-pulse">Syncing modifications...</span>
-                        </>
-                      ) : cloudSyncStatus === 'error' ? (
-                        <>
-                          <AlertCircle className="w-3 h-3 text-red-400" />
-                          <span className="text-red-400 font-bold font-mono">Sync stalled / Offline</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
-                          <span className="text-emerald-400 font-bold font-mono font-semibold">Synced & secured</span>
-                        </>
-                      )}
-                    </span>
+                    <h2 className="text-sm font-bold tracking-tight text-white uppercase font-display">Target Month Selector</h2>
+                    <p className="text-[10px] text-gray-500 font-mono uppercase">Setup current target period</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 w-full md:w-auto md:min-w-[280px]">
+                  <div>
+                    <label className="sr-only">Select Year</label>
+                    <select 
+                      value={selectedYear} 
+                      onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                      className="w-full text-xs font-semibold bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value={2025}>2025</option>
+                      <option value={2026}>2026</option>
+                      <option value={2027}>2027</option>
+                      <option value={2028}>2028</option>
+                    </select>
                   </div>
                   <div>
-                    <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-semibold">Last Cloud Update</span>
-                    <span className="font-mono">{cloudLastSaved ? `${cloudLastSaved}` : 'Just now'}</span>
-                  </div>
-                </div>
-              ) : (
-                /* Unauthenticated instructions block */
-                <div className="flex items-center gap-2 text-xs text-gray-500 italic">
-                  <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span>Securely handled using Firebase authenticated database endpoints. No browser cache cleared can wipe your entries after sync.</span>
-                </div>
-              )}
-            </div>
-
-            {/* Right side form if unauthenticated, or action buttons if authenticated */}
-            <div className="md:w-[320px] bg-[#1C1F26] border border-[#2A2D35] rounded-xl p-4 flex flex-col justify-center gap-3 shrink-0">
-              {authLoading ? (
-                /* Authentication Loading State */
-                <div className="flex flex-col items-center justify-center py-6 gap-2 text-xs text-gray-400">
-                  <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span>Configuring Cloud connection...</span>
-                </div>
-              ) : user ? (
-                /* Authenticated Action Controls */
-                <div className="space-y-2.5">
-                  <p className="text-[10px] uppercase font-bold tracking-wider text-gray-500 text-center">Cloud Synchronization Actions</p>
-                  
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={handleManualForceSyncLocalToCloud}
-                      title="Force upload local copy to cloud"
-                      className="px-3 py-2 bg-blue-600/10 border border-blue-500/20 hover:bg-blue-600/20 text-blue-400 rounded-lg text-xs font-semibold flex flex-col items-center justify-center gap-1 transition-all"
+                    <label className="sr-only">Select Month</label>
+                    <select 
+                      value={selectedMonth} 
+                      onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                      className="w-full text-xs font-semibold bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Upload Force</span>
-                    </button>
-                    <button
-                      onClick={handleManualFetchCloudToLocal}
-                      title="Overwrite local data with cloud data"
-                      className="px-3 py-2 bg-emerald-600/10 border border-emerald-500/20 hover:bg-emerald-600/20 text-emerald-400 rounded-lg text-xs font-semibold flex flex-col items-center justify-center gap-1 transition-all"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Cloud Fetch</span>
-                    </button>
-                  </div>
-
-                  <hr className="border-[#2A2D35] my-1" />
-
-                  <button
-                    onClick={handleCloudSignOut}
-                    className="w-full py-1.5 px-3 bg-[#2A2D35] hover:bg-[#343842] hover:text-white text-gray-300 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all"
-                  >
-                    <LogOut className="w-3.5 h-3.5 text-gray-400" />
-                    <span>Sign Out Device</span>
-                  </button>
-                </div>
-              ) : (
-                /* Authentication Sign In Options */
-                <div className="space-y-3.5">
-                  {/* Google Login (Highly recommended & configured out of the box) */}
-                  <div className="space-y-1.5 font-sans">
-                    <p className="text-[9px] uppercase font-bold tracking-wider text-emerald-400">Recommended (One-Click)</p>
-                    <button
-                      type="button"
-                      onClick={handleGoogleSignIn}
-                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm shadow-emerald-950/20"
-                    >
-                      <Cloud className="w-4 h-4" />
-                      <span>One-Click Google Sync</span>
-                    </button>
-                    <p className="text-[9px] text-gray-500 text-center leading-normal">Uses Google Identity (No manual registration steps needed)</p>
-                  </div>
-
-                  <div className="flex items-center gap-2 my-1 text-gray-500 font-sans">
-                    <span className="h-px bg-[#2A2D35] flex-1"></span>
-                    <span className="text-[9px] uppercase font-bold text-gray-600 font-mono">or register / log in</span>
-                    <span className="h-px bg-[#2A2D35] flex-1"></span>
-                  </div>
-
-                  {/* Authentication SignUp/SignIn Form */}
-                  <form onSubmit={handleCloudSignIn} className="space-y-2.5 font-sans">
-                    <div className="text-[10px] uppercase font-bold tracking-wider text-gray-400 flex items-center gap-1 justify-between">
-                      <span>{isSignUp ? "Create Cloud Sync Account" : "Access Cloud Logs"}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsSignUp(!isSignUp);
-                          setAuthErrorAlert('');
-                        }}
-                        className="text-[#3b82f6] hover:underline text-[9px] lowercase font-semibold"
-                      >
-                        {isSignUp ? "switch to login" : "switch to sign up"}
-                      </button>
-                    </div>
-
-                    <div className="space-y-1.5 text-xs text-white">
-                      <div className="relative">
-                        <Mail className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-2.5" />
-                        <input
-                          type="email"
-                          placeholder="your.email@example.com"
-                          value={authEmail}
-                          onChange={(e) => setAuthEmail(e.target.value)}
-                          className="w-full bg-[#15171C] text-white border border-[#2A2D35] rounded-lg pl-8 pr-2.5 py-1.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
-                      </div>
-                      <div className="relative">
-                        <Lock className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-2.5" />
-                        <input
-                          type="password"
-                          placeholder="six-character password"
-                          value={authPassword}
-                          onChange={(e) => setAuthPassword(e.target.value)}
-                          className="w-full bg-[#15171C] text-white border border-[#2A2D35] rounded-lg pl-8 pr-2.5 py-1.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    {authErrorAlert && (
-                      <div className="text-[10px] text-red-400 font-semibold bg-red-400/5 border border-red-500/10 p-2 rounded-md leading-normal italic whitespace-pre-line space-y-1">
-                        <p className="font-bold uppercase text-[9px] tracking-wider">⚠️ Sync Stalled / Intercepted:</p>
-                        <p className="font-normal text-gray-300 leading-normal not-italic">{authErrorAlert}</p>
-                        {authErrorAlert.includes('operation-not-allowed') && (
-                          <div className="mt-1.5 p-1.5 bg-black/40 rounded border border-red-500/10 font-normal normal-case not-italic text-gray-400 leading-relaxed space-y-1 text-[9px]">
-                            <p className="font-semibold text-gray-300 uppercase tracking-widest text-[8px] text-red-400">How to authorize Email/Password:</p>
-                            <ol className="list-decimal pl-3.5 space-y-0.5 text-gray-300">
-                              <li>Go to your Firebase Project Console.</li>
-                              <li>Navigate to <b>Authentication</b> inside the sidebar.</li>
-                              <li>Go to the <b>Sign-in method</b> tab.</li>
-                              <li>Add & Enable <b>Email/Password</b> provider.</li>
-                            </ol>
-                            <p className="text-[8px] text-gray-500 italic mt-1 leading-normal">Alternatively, use the green One-Click Google Sync button above which works out-of-the-box!</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                    >
-                      {isSignUp ? (
-                        <>
-                          <UserPlus className="w-3.5 h-3.5" />
-                          <span>Create & Sync Account</span>
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Sign In & Sync Device</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* Dual Scholar Profile Meta & Month Setup Panel */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Column 1 & 2: Scholar Academic Profile Metadata */}
-            <section id="scholar-metadata-profile" className="lg:col-span-2 bg-[#15171C] rounded-2xl border border-[#2A2D35] shadow-sm overflow-hidden flex flex-col">
-              <div className="bg-[#1C1F26] px-6 py-4 border-b border-[#2A2D35] flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <GraduationCap className="w-5 h-5 text-blue-500" />
-                  <h2 className="text-sm font-bold tracking-tight text-white font-display uppercase">Scholar Profile details</h2>
-                </div>
-                <button 
-                  onClick={() => setEditingScholar(!editingScholar)}
-                  className={`text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1 border transition-all ${
-                    editingScholar ? 'bg-blue-600/20 text-blue-400 border-blue-600/30' : 'bg-[#2A2D35] text-gray-300 border-[#343842] hover:bg-[#343842] hover:text-white'
-                  }`}
-                >
-                  <Edit2 className="w-3 h-3" />
-                  <span>{editingScholar ? 'Lock Details' : 'Modify Profile'}</span>
-                </button>
-              </div>
-
-              <div className="p-6 flex-1 flex flex-col justify-between gap-4">
-                {editingScholar ? (
-                  /* Editable Meta Form */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Scholar Full Name</label>
-                      <input 
-                        type="text" 
-                        value={scholar.name} 
-                        onChange={(e) => setScholar({ ...scholar, name: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Designation / Role</label>
-                      <input 
-                        type="text" 
-                        value={scholar.designation} 
-                        onChange={(e) => setScholar({ ...scholar, designation: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Department</label>
-                      <input 
-                        type="text" 
-                        value={scholar.department} 
-                        onChange={(e) => setScholar({ ...scholar, department: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Research Guide supervisor</label>
-                      <input 
-                        type="text" 
-                        value={scholar.guide} 
-                        onChange={(e) => setScholar({ ...scholar, guide: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Affiliated University</label>
-                      <input 
-                        type="text" 
-                        value={scholar.university} 
-                        onChange={(e) => setScholar({ ...scholar, university: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Research Dissertation / Thesis Topic</label>
-                      <textarea 
-                        rows={2}
-                        value={scholar.researchTopic} 
-                        onChange={(e) => setScholar({ ...scholar, researchTopic: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none font-serif"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Daily Working Hours</label>
-                      <input 
-                        type="text" 
-                        value={scholar.workingHours} 
-                        onChange={(e) => setScholar({ ...scholar, workingHours: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-gray-500 font-semibold mb-1 uppercase tracking-wider">Recess Break Slot</label>
-                      <input 
-                        type="text" 
-                        value={scholar.recess} 
-                        onChange={(e) => setScholar({ ...scholar, recess: e.target.value })}
-                        className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  /* Display Profile details card */
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <div className="space-y-1">
-                      <p className="text-gray-500 font-semibold uppercase tracking-wider">JRF Scholar Name</p>
-                      <p className="text-sm font-bold text-white">{scholar.name}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-gray-500 font-semibold uppercase tracking-wider">Academic Placement Details</p>
-                      <p className="text-sm font-semibold text-gray-200">{scholar.designation}</p>
-                      <p className="text-xs text-gray-400">{scholar.department}</p>
-                      <p className="text-xs text-gray-500 leading-normal">{scholar.university}</p>
-                    </div>
-                    <div className="space-y-1 md:col-span-2 bg-[#1C1F26]/50 p-3 rounded-lg border border-[#2A2D35]">
-                      <p className="text-gray-500 font-semibold uppercase tracking-widest text-[9px]">Research Dissertation Scope</p>
-                      <p className="text-xs font-serif font-medium text-gray-200 italic leading-relaxed">
-                        "{scholar.researchTopic}"
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-gray-500 font-semibold uppercase tracking-wider">Research supervisor (guide)</p>
-                      <p className="text-xs font-bold text-gray-300">{scholar.guide}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-gray-500 font-semibold uppercase tracking-wider">Prescribed Timings</p>
-                      <p className="text-xs text-blue-400 font-mono">
-                        ⏱️ {scholar.workingHours} (Break: {scholar.recess})
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* Column 3: Calendar Settings & Automatic Generator */}
-            <section id="calendar-settings-panel" className="bg-[#15171C] border border-[#2A2D35] rounded-2xl shadow-sm p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <CalendarIcon className="w-5 h-5 text-blue-500" />
-                  <h2 className="text-sm font-bold tracking-tight text-white font-display uppercase">Month Generator</h2>
-                </div>
-
-                <div className="space-y-4">
-                  {/* Select month/year */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold tracking-wider text-gray-500 mb-1">Select Year</label>
-                      <select 
-                        value={selectedYear} 
-                        onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                        className="w-full text-xs font-semibold bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                      >
-                        <option value={2025}>2025</option>
-                        <option value={2026}>2026</option>
-                        <option value={2027}>2027</option>
-                        <option value={2028}>2028</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold tracking-wider text-gray-400 mb-1">Select Month</label>
-                      <select 
-                        value={selectedMonth} 
-                        onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                        className="w-full text-xs font-semibold bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                      >
-                        {Array.from({ length: 12 }, (_, i) => (
-                           <option key={i} value={i}>
-                             {new Date(2026, i, 1).toLocaleDateString('en-US', { month: 'long' })}
-                           </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Smart Filters Checklist / Rules */}
-                  <div className="bg-[#1C1F26]/40 border border-[#2A2D35] rounded-lg p-3 space-y-2 text-xs">
-                    <p className="font-bold text-[10px] uppercase text-gray-500 tracking-wider mb-1">Automatic Omission Rules</p>
-                    <div className="flex items-center gap-2 text-gray-300">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Exclude all <strong>Sundays</strong> ({monthInfo.totalSundays} days matching)</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-gray-300">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Exclude <strong>Even Saturdays</strong> (2nd & 4th: {monthInfo.totalEvenSaturdays} days matching)</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-gray-300">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Exclude <strong>Designated Holidays</strong> ({monthInfo.activeHolidays.length} active in period)</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Button */}
-              <div className="mt-4 pt-4 border-t border-[#2A2D35] space-y-2">
-                <button 
-                  onClick={handleGenerateTemplate}
-                  className="w-full bg-blue-600 hover:bg-blue-700 hover:scale-[1.01] text-white py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-blue-600/10 transition-all active:scale-[0.99]"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Generate Clean Month Template</span>
-                </button>
-                <div className="flex items-center gap-2 justify-center text-[10px] text-gray-400 font-mono">
-                  <Info className="w-3 h-3 text-blue-500" />
-                  <span>Leaves <strong className="text-blue-400">{monthInfo.totalWorkingDays}</strong> working log blocks</span>
-                </div>
-              </div>
-            </section>
-
-             {/* Special Control: Holidays Editor & CSV imports */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Left box: Holiday and Holiday List Manager */}
-            <div className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4 text-gray-400" />
-                  <span>Configure Holidays</span>
-                </h3>
-                <button 
-                  onClick={() => setShowHolidaysEditor(!showHolidaysEditor)}
-                  className="text-[11px] text-gray-400 hover:text-blue-400 font-semibold"
-                >
-                  {showHolidaysEditor ? 'Hide Editor' : 'Manage List'}
-                </button>
-              </div>
-
-              {showHolidaysEditor ? (
-                /* Holidays database custom editor */
-                <div className="space-y-3">
-                  <form onSubmit={(e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const dt = fd.get('h_date') as string;
-                    const nm = fd.get('h_name') as string;
-                    if (dt && nm) {
-                      handleAddHoliday(dt, nm);
-                      e.currentTarget.reset();
-                    }
-                  }} className="grid grid-cols-1 gap-2 bg-[#1C1F26] p-2 text-xs rounded-lg border border-[#2A2D35]">
-                    <input type="date" name="h_date" className="p-1 text-xs border border-[#2A2D35] bg-[#0F1115] text-white rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500" required />
-                    <input type="text" name="h_name" placeholder="e.g. Maker Sankranti" className="p-1 text-xs border border-[#2A2D35] bg-[#0F1115] text-white rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500" required />
-                    <button type="submit" className="bg-blue-600 text-white rounded p-1 text-xs font-bold hover:bg-blue-700">Add Holiday</button>
-                  </form>
-                  <div className="max-h-40 overflow-y-auto divide-y divide-[#2A2D35] border border-[#2A2D35] rounded-lg text-[11px] bg-[#0F1115]">
-                    {holidays.map(h => (
-                      <div key={h.date} className="p-1 px-2 flex justify-between items-center group">
-                        <span className="font-mono text-gray-400">{h.date}</span>
-                        <span className="font-semibold text-gray-200">{h.name}</span>
-                        <button type="button" onClick={() => handleRemoveHoliday(h.date)} className="text-red-400 hover:text-red-600 pl-2">×</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                /* Static mini summary */
-                <div className="text-xs space-y-2">
-                  <p className="text-gray-400 leading-normal">
-                    The app excludes state-level days like Makar Sankranti and Republic Day automatically. Currently <strong>{holidays.length} holidays</strong> are saved in your master schedule block.
-                  </p>
-                  {monthInfo.activeHolidays.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {monthInfo.activeHolidays.map(h => (
-                        <span key={h.date} className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-600/20 text-[10px] font-medium font-mono">
-                          {h.name} ({h.date.substring(5)})
-                        </span>
+                      {Array.from({ length: 12 }, (_, i) => (
+                         <option key={i} value={i}>
+                           {new Date(2026, i, 1).toLocaleDateString('en-US', { month: 'long' })}
+                         </option>
                       ))}
-                    </div>
-                  ) : <p className="text-[11px] italic text-gray-500">No scheduled holidays in {selectedMonthName}.</p>}
-                </div>
-              )}
-            </div>
-
-            {/* Middle Box: CSV file Ingestor & Raw Data Handler */}
-            <div className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm space-y-3">
-              <h3 className="font-display font-bold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-                <Upload className="w-4 h-4 text-emerald-400" />
-                <span>Ingest prepared CSV Sheet</span>
-              </h3>
-              <p className="text-xs text-gray-400 leading-normal">
-                Already prepared a monthly report in Excel/Sheets? Upload the spreadsheet as a CSV file to load all records instantly.
-              </p>
-
-              <div className="flex flex-col gap-2 pt-1">
-                {/* File picker */}
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    accept=".csv" 
-                    onChange={handleFileUpload}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                    id="csv-file-picker"
-                  />
-                  <div className="border border-dashed border-[#2A2D35] hover:border-blue-500 rounded-xl p-2.5 text-center transition-all bg-blue-500/5">
-                    <span className="text-[11px] font-semibold text-blue-400 flex items-center justify-center gap-1.5">
-                      <FileSpreadsheet className="w-4 h-4" />
-                      Choose CSV file
-                    </span>
+                    </select>
                   </div>
+                </div>
+
+                {/* Vertical Separator for wide screens */}
+                <span className="hidden md:block h-8 w-px bg-[#2A2D35]" />
+
+                {/* Smart filters summary row to save space */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-400">
+                  <div className="flex items-center gap-1.5 font-sans" title="Sundays are automatically skipped for JRF sheets">
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Sundays Excluded (<strong className="text-gray-200 font-mono font-semibold">{monthInfo.totalSundays}</strong>)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-sans" title="Even Saturdays are excluded automatically">
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Even Saturdays Excluded (<strong className="text-gray-200 font-mono font-semibold">{monthInfo.totalEvenSaturdays}</strong>)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-sans" title="Designated festival/national holidays are omitted">
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Holidays Excluded (<strong className="text-gray-200 font-mono font-semibold">{monthInfo.activeHolidays.length}</strong>)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Template generator & action box */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 shrink-0 lg:border-l lg:border-[#2A2D35] lg:pl-5">
+                <div className="text-center sm:text-right shrink-0">
+                  <span className="text-[10px] text-gray-500 uppercase tracking-widest block font-bold font-mono">Targets Generated</span>
+                  <strong className="text-blue-400 text-sm font-semibold">{monthInfo.totalWorkingDays} Working Logs</strong>
                 </div>
                 
                 <button 
-                  onClick={() => setShowCsvBox(!showCsvBox)}
-                  className="text-center text-[10px] text-gray-500 font-semibold hover:text-blue-400"
+                  onClick={handleGenerateTemplate}
+                  className="bg-blue-600 hover:bg-blue-700 hover:scale-[1.01] text-white py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-blue-600/10 transition-all active:scale-[0.99]"
                 >
-                  {showCsvBox ? "Collapse Paste Area" : "Or Paste raw CSV text..."}
+                  <Sparkles className="w-4 h-4" />
+                  <span>Generate Clean Month</span>
                 </button>
               </div>
+            </div>
+          </section>
 
-              {showCsvBox && (
-                <div className="space-y-2 mt-2">
-                  <textarea 
-                    rows={4} 
-                    placeholder='Date,Time Slot,Activity Type,Detailed Description of Work,Remarks&#10;"Thursday, January 01, 2026",12:00 to 2:00,Reading,"Ramakrishnan, E. V. Preface"'
-                    value={csvInput}
-                    onChange={(e) => setCsvInput(e.target.value)}
-                    className="w-full font-mono text-[10px] p-2 bg-[#1C1F26] text-white border border-[#2A2D35] rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  />
+          {/* --- Collapsible Workspace Setup Hub & Cloud Sync Drawer --- */}
+          <section id="workspace-setup-hub-container" className="flex flex-col gap-4">
+            {/* 1. Header Bar with stats badges */}
+            <div className="bg-[#f1efea] border border-[#2A2D35]/80 rounded-2xl p-3 px-4 md:px-5 flex flex-wrap items-center justify-between gap-4 transition-all duration-200">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-300 mr-2">
+                  <Settings className="w-4 h-4 text-gray-400" />
+                  <span>Workspace Configuration:</span>
+                </div>
+                
+                {/* Profile setup status */}
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
+                  <GraduationCap className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Scholar: <strong className="text-gray-200">{scholar.name || 'Set Profile Name'}</strong></span>
+                </div>
+
+                {/* Cloud Sync Status info */}
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
+                  <Cloud className={`w-3.5 h-3.5 ${user ? 'text-emerald-400' : 'text-gray-500'}`} />
+                  <span>Cloud: <strong className="text-gray-200">{user ? user.email : 'Local Only'}</strong></span>
+                </div>
+
+                {/* Active Holidays status */}
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
+                  <CalendarIcon className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Muted Holidays: <strong className="text-gray-200">{holidays.length} active</strong></span>
+                </div>
+              </div>
+
+              {/* Toggle Button */}
+              <button
+                onClick={() => setShowAdvancedSetup(!showAdvancedSetup)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
+                  showAdvancedSetup 
+                    ? 'bg-blue-600/10 text-blue-400 border-blue-500/20' 
+                    : 'bg-[#2A2D35] text-gray-300 border-[#343842] hover:bg-[#343842] hover:text-white'
+                }`}
+              >
+                <span>{showAdvancedSetup ? 'Hide Setup Console' : 'Open Setup Console'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showAdvancedSetup ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+
+            {/* 2. Expanded Setup Workbench Drawer */}
+            {showAdvancedSetup && (
+              <div className="bg-[#15171C] border border-[#2A2D35] rounded-2xl shadow-md p-5 md:p-6 space-y-5 animate-fadeIn">
+                {/* Tab select strip */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-[#2A2D35] pb-2">
                   <button 
-                    onClick={handleImportCSV}
-                    className="w-full bg-[#107C41] hover:bg-[#0E6C38] text-white rounded-lg p-1.5 text-xs font-bold"
+                    onClick={() => setActiveSetupTab('profile')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSetupTab === 'profile' 
+                        ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' 
+                        : 'text-gray-400 hover:text-white bg-transparent border border-transparent'
+                    }`}
                   >
-                    Parse Paste Content
+                    <GraduationCap className="w-4 h-4" />
+                    <span>🎓 Scholar Profile Details</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setActiveSetupTab('cloud')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSetupTab === 'cloud' 
+                        ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' 
+                        : 'text-gray-400 hover:text-white bg-transparent border border-transparent'
+                    }`}
+                  >
+                    <Cloud className="w-4 h-4" />
+                    <span>☁️ Cloud Multi-Device Sync</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setActiveSetupTab('holidays')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSetupTab === 'holidays' 
+                        ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' 
+                        : 'text-gray-400 hover:text-white bg-transparent border border-transparent'
+                    }`}
+                  >
+                    <CalendarIcon className="w-4 h-4" />
+                    <span>📅 Configure Holidays</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setActiveSetupTab('imports')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSetupTab === 'imports' 
+                        ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' 
+                        : 'text-gray-400 hover:text-white bg-transparent border border-transparent'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>📊 Spreadsheet Sync & CSV Imports</span>
                   </button>
                 </div>
-              )}
-            </div>
 
-            {/* Right Box: Sync directly to live Google Sheet */}
-            <div className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                  <span>Google Sheets Sync</span>
-                </h3>
-                <button 
-                  onClick={() => setShowGoogleSyncCard(!showGoogleSyncCard)}
-                  className="p-1 hover:bg-[#1C1F26] rounded text-gray-400 hover:text-white"
-                  title="Config settings"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                {/* Tab content bodies */}
+                <div className="pt-2">
+                  {/* Active Tab A: Scholar Profile Details */}
+                  {activeSetupTab === 'profile' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between border-b border-[#2A2D35] pb-3">
+                        <div>
+                          <h3 className="text-xs uppercase font-bold tracking-wider text-white">Academic Placement Details</h3>
+                          <p className="text-[11px] text-gray-500 leading-normal">Configure JRF supervisor names, affiliated university, timing requirements and thesis topics printed in university templates.</p>
+                        </div>
+                        <button 
+                          onClick={() => setEditingScholar(!editingScholar)}
+                          className={`text-xs font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            editingScholar 
+                              ? 'bg-blue-600/25 text-blue-400 border-blue-600/40' 
+                              : 'bg-[#2A2D35] text-gray-300 border-[#343842] hover:bg-[#343842] hover:text-white'
+                          }`}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>{editingScholar ? 'Lock Profile Data' : 'Modify Scholar Fields'}</span>
+                        </button>
+                      </div>
 
-              <p className="text-xs text-gray-400 leading-normal">
-                Save logs directly into an organized online spreadsheet with university signature lines placed automatically.
-              </p>
+                      {editingScholar ? (
+                        /* Editable Meta Form */
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Scholar Full Name</label>
+                            <input 
+                              type="text" 
+                              value={scholar.name} 
+                              onChange={(e) => setScholar({ ...scholar, name: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Designation / Role</label>
+                            <input 
+                              type="text" 
+                              value={scholar.designation} 
+                              onChange={(e) => setScholar({ ...scholar, designation: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Department</label>
+                            <input 
+                              type="text" 
+                              value={scholar.department} 
+                              onChange={(e) => setScholar({ ...scholar, department: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Research Guide supervisor</label>
+                            <input 
+                              type="text" 
+                              value={scholar.guide} 
+                              onChange={(e) => setScholar({ ...scholar, guide: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Affiliated University</label>
+                            <input 
+                              type="text" 
+                              value={scholar.university} 
+                              onChange={(e) => setScholar({ ...scholar, university: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Research Dissertation / Thesis Topic</label>
+                            <textarea 
+                              rows={2}
+                              value={scholar.researchTopic} 
+                              onChange={(e) => setScholar({ ...scholar, researchTopic: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none font-serif"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Daily Working Hours</label>
+                            <input 
+                              type="text" 
+                              value={scholar.workingHours} 
+                              onChange={(e) => setScholar({ ...scholar, workingHours: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-gray-400 font-semibold mb-1 uppercase tracking-wider text-[10px]">Recess Break Slot</label>
+                            <input 
+                              type="text" 
+                              value={scholar.recess} 
+                              onChange={(e) => setScholar({ ...scholar, recess: e.target.value })}
+                              className="w-full bg-[#1C1F26] text-white border border-[#2A2D35] rounded-xl p-2.5 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        /* Display Profile details card */
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs bg-[#1C1F26]/30 border border-[#2A2D35] p-5 rounded-2xl">
+                          <div className="space-y-1">
+                            <p className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">JRF Scholar Name</p>
+                            <p className="text-sm font-bold text-white leading-normal">{scholar.name || 'Not configured yet'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Academic Placement Details</p>
+                            <p className="text-sm font-semibold text-gray-200">{scholar.designation}</p>
+                            <p className="text-xs text-gray-400">{scholar.department}</p>
+                            <p className="text-xs text-gray-500 leading-normal">{scholar.university}</p>
+                          </div>
+                          <div className="space-y-1 md:col-span-2 bg-[#1C1F26]/70 p-4 border border-[#2A2D35]/60 rounded-xl">
+                            <p className="text-gray-500 font-semibold uppercase tracking-widest text-[9px]">Research Dissertation Scope</p>
+                            <p className="text-xs font-serif font-medium text-gray-200 italic leading-relaxed">
+                              "{scholar.researchTopic}"
+                            </p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Research supervisor (guide)</p>
+                            <p className="text-xs font-semibold text-gray-300">{scholar.guide}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Prescribed Timings</p>
+                            <p className="text-xs text-blue-400 font-mono">
+                              ⏱️ {scholar.workingHours} (Break: {scholar.recess})
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-              <div className="space-y-2">
-                <button 
-                  onClick={handleSheetsSync}
-                  className="w-full bg-[#107C41] hover:bg-[#0E6C38] active:scale-[0.98] text-white py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-700/5 transition-all"
-                >
-                  <span>Sync to Google Sheets</span>
-                </button>
+                  {/* Active Tab B: Cloud Multi-Device Sync */}
+                  {activeSetupTab === 'cloud' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <div className="lg:col-span-2 space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className={`p-1.5 rounded-lg ${user ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                            <Cloud className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-xs uppercase font-bold tracking-wider text-white">Cloud Multi-Device Backup</h3>
+                            <p className="text-[11px] text-gray-500 leading-normal">Sync your scholar file profiles, and custom schedules automatically in the cloud.</p>
+                          </div>
+                        </div>
 
-                {syncingStatus && (
-                  <p className="text-[10px] font-semibold text-gray-300 italic border-l-2 border-blue-500 pl-2">
-                    {syncingStatus}
-                  </p>
-                )}
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                          {user 
+                            ? "Your scholar profile, logs, custom holidays, and configurations are connected automatically in real-time. Any adjustments made here reflect instantly on all registered browser sessions."
+                            : "Registering connects your database with Firebase Auth, enabling immediate save-states. Your work log spreadsheets won't clear even if you reset or change devices."
+                          }
+                        </p>
 
-                {syncedSheetUrl && (
-                  <a 
-                    href={syncedSheetUrl} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className="text-[11px] font-bold text-emerald-400 hover:underline flex items-center gap-1"
-                  >
-                    <Maximize2 className="w-3 h-3" />
-                    Open newly created Sheet
-                  </a>
-                )}
-              </div>
+                        {user ? (
+                          <div className="flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-gray-300 bg-[#1C1F26]/30 border border-[#2A2D35] p-4 rounded-xl">
+                            <div>
+                              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Logged In Account</span>
+                              <strong className="text-blue-400">{user.email}</strong>
+                            </div>
+                            <div>
+                              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Synchronization Status</span>
+                              <span className="flex items-center gap-1.5 mt-0.5">
+                                {cloudSyncStatus === 'saving' ? (
+                                  <>
+                                    <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                    <span className="text-blue-400 font-semibold font-mono animate-pulse">Syncing...</span>
+                                  </>
+                                ) : cloudSyncStatus === 'error' ? (
+                                  <>
+                                    <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                                    <span className="text-red-400 font-bold font-mono">Sync stalled</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                                    <span className="text-emerald-400 font-bold font-mono">Connected & Secured</span>
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Last Cloud Backup</span>
+                              <span className="font-mono text-gray-200 mt-0.5 block">{cloudLastSaved ? cloudLastSaved : 'Synced just now'}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-gray-500 italic">
+                            <Info className="w-4 h-4 text-blue-500 shrink-0" />
+                            <span>Authentication values are verified and encrypted using Firebase security architecture rules.</span>
+                          </div>
+                        )}
+                      </div>
 
-              {/* Collapsible settings drawer for OAuth */}
-              {showGoogleSyncCard && (
-                <div className="bg-[#1D212A] p-3 rounded-lg border border-[#2A2D35] space-y-2 text-xs">
-                  <p className="font-bold text-[10px] uppercase text-gray-500">OAuth Access Token</p>
-                  <p className="text-[10px] text-gray-400 leading-normal">
-                    If permissions are configured, paste the temporary access token below to connect spreadsheet flows:
-                  </p>
-                  <input 
-                    type="password"
-                    placeholder="ya29.a0AfH..."
-                    value={googleAccessToken}
-                    onChange={(e) => setGoogleAccessToken(e.target.value)}
-                    className="w-full text-xs p-1.5 bg-[#1C1F26] border border-[#2A2D35] text-white rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <div className="text-[10px] text-gray-500 italic">
-                    Token is kept completely in-memory and local storage securely.
-                  </div>
+                      {/* Right Control Pane */}
+                      <div className="bg-[#1C1F26]/40 border border-[#2A2D35] rounded-2xl p-4 flex flex-col justify-center gap-3">
+                        {authLoading ? (
+                          <div className="flex flex-col items-center justify-center p-6 gap-2 text-xs text-gray-400">
+                            <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
+                            <span>Syncing database credentials...</span>
+                          </div>
+                        ) : user ? (
+                          <div className="space-y-2">
+                            <p className="text-[10px] uppercase font-bold tracking-wider text-gray-500 text-center">Cloud Management</p>
+                            <button
+                              type="button"
+                              onClick={handleCloudSignOut}
+                              className="w-full py-2.5 px-3 bg-[#2A2D35] hover:bg-red-950/25 hover:text-red-400 hover:border-red-900/30 border border-[#343842] text-gray-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                            >
+                              <LogOut className="w-3.5 h-3.5" />
+                              <span>Sign Out Account</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <p className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 text-center">Quick Access Setup</p>
+                            <button
+                              type="button"
+                              onClick={handleGoogleSignIn}
+                              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm shadow-emerald-950/20"
+                            >
+                              <Cloud className="w-4 h-4" />
+                              <span>One-Click Google Sync</span>
+                            </button>
+
+                            <div className="flex items-center gap-2 my-1 text-gray-500">
+                              <span className="h-px bg-[#2A2D35] flex-1"></span>
+                              <span className="text-[9px] uppercase font-bold text-gray-655 font-mono">or email credentials</span>
+                              <span className="h-px bg-[#2A2D35] flex-1"></span>
+                            </div>
+
+                            <form onSubmit={handleCloudSignIn} className="space-y-2">
+                              <div className="text-[10px] uppercase font-bold tracking-wider text-gray-400 flex items-center gap-1 justify-between">
+                                <span>{isSignUp ? "Register Backup" : "Sign In & Sync"}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsSignUp(!isSignUp);
+                                    setAuthErrorAlert('');
+                                  }}
+                                  className="text-blue-550 hover:underline text-[9px] lowercase font-semibold"
+                                >
+                                  {isSignUp ? "switch to login" : "switch to register"}
+                                </button>
+                              </div>
+
+                              <input
+                                type="email"
+                                placeholder="your.email@example.com"
+                                value={authEmail}
+                                onChange={(e) => setAuthEmail(e.target.value)}
+                                className="w-full bg-[#15171C] text-white border border-[#2A2D35] rounded-xl pl-3 pr-2.5 py-1.5 text-xs focus:outline-none"
+                              />
+
+                              <input
+                                type="password"
+                                placeholder="six-character password"
+                                value={authPassword}
+                                onChange={(e) => setAuthPassword(e.target.value)}
+                                className="w-full bg-[#15171C] text-white border border-[#2A2D35] rounded-xl pl-3 pr-2.5 py-1.5 text-xs focus:outline-none"
+                              />
+
+                              {authErrorAlert && (
+                                <p className="text-[10px] text-red-500 bg-red-500/5 p-2 rounded-lg leading-snug border border-red-500/15">
+                                  {authErrorAlert}
+                                </p>
+                              )}
+
+                              <button
+                                type="submit"
+                                className="w-full py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                              >
+                                {isSignUp ? "Register Sync State" : "Load Sync State"}
+                              </button>
+                            </form>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Active Tab C: Configure Holidays */}
+                  {activeSetupTab === 'holidays' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3 text-xs leading-relaxed text-gray-400">
+                        <div className="flex items-center gap-1.5 border-b border-[#2A2D35] pb-2">
+                          <h3 className="font-bold text-xs uppercase tracking-wider text-white">Holiday Calendar Configurations</h3>
+                        </div>
+                        <p>
+                          JRF work log guidelines exclude Indian national and state festival holidays. System presets automatically mute days like Makar Sankranti, Republic Day, Holi or Independence Day matching your month framework parameters.
+                        </p>
+                        
+                        <div className="bg-[#1C1F26]/30 border border-[#2A2D35] p-3 rounded-xl space-y-2 mt-2">
+                          <p className="font-bold text-[10px] uppercase text-gray-500 tracking-wider">Holidays in {selectedMonthName}:</p>
+                          {monthInfo.activeHolidays.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {monthInfo.activeHolidays.map(h => (
+                                <span key={h.date} className="px-2.5 py-1 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[10px] font-semibold font-mono">
+                                  {h.name} ({h.date})
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] italic text-gray-500">No scheduled calendar holidays in {selectedMonthName} selection.</p>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] text-gray-400 bg-blue-500/5 border border-blue-500/10 p-3 rounded-lg leading-relaxed mt-2">
+                          💡 Adding customized holidays in the right manager column guarantees they are automatically omitted if you run <b>"Generate Clean Month"</b>.
+                        </div>
+                      </div>
+
+                      {/* Holidays Custom List Manager Form */}
+                      <div className="space-y-3 bg-[#1C1F26]/30 border border-[#2A2D35] p-4 rounded-2xl">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[11px] uppercase font-bold tracking-wider text-white">Master holiday calendar list</h4>
+                          <span className="text-[10px] font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full">
+                            {holidays.length} active
+                          </span>
+                        </div>
+
+                        <form onSubmit={(e) => {
+                          e.preventDefault();
+                          const fd = new FormData(e.currentTarget);
+                          const dt = fd.get('h_date') as string;
+                          const nm = fd.get('h_name') as string;
+                          if (dt && nm) {
+                            handleAddHoliday(dt, nm);
+                            e.currentTarget.reset();
+                          }
+                        }} className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 bg-[#1C1F26]/60 rounded-xl border border-[#2A2D35]">
+                          <input type="date" name="h_date" className="p-2 text-xs border border-[#2A2D35] bg-[#0F1115] text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" required />
+                          <input type="text" name="h_name" placeholder="Makar Sankranti" className="p-2 text-xs border border-[#2A2D35] bg-[#0F1115] text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" required />
+                          <button type="submit" className="sm:col-span-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-1.5 text-xs font-bold cursor-pointer transition-all">Add Custom Holiday</button>
+                        </form>
+
+                        <div className="max-h-48 overflow-y-auto divide-y divide-[#2A2D35] border border-[#2A2D35] rounded-xl bg-[#0F1115]">
+                          {holidays.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-gray-500 italic">No custom holidays configured.</div>
+                          ) : (
+                            holidays.map(h => (
+                              <div key={h.date} className="p-2 px-3 flex justify-between items-center hover:bg-[#1C1F26]/35 group text-xs">
+                                <span className="font-mono text-gray-400">{h.date}</span>
+                                <strong className="font-medium text-gray-200">{h.name}</strong>
+                                <button type="button" onClick={() => handleRemoveHoliday(h.date)} className="text-red-400 hover:text-red-600 text-sm pl-2 font-bold select-none cursor-pointer">×</button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Active Tab D: Spreadsheet Sync & CSV Imports */}
+                  {activeSetupTab === 'imports' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Left: CSV Loader */}
+                      <div className="space-y-3 bg-[#1C1F26]/30 border border-[#2A2D35] p-5 rounded-2xl flex flex-col justify-between">
+                        <div className="space-y-2">
+                          <h3 className="font-display font-semibold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
+                            <Upload className="w-4 h-4 text-emerald-400" />
+                            <span>Ingest prepared CSV Sheet</span>
+                          </h3>
+                          <p className="text-xs text-gray-400 leading-relaxed font-sans">
+                            Log history spreadsheet recorded elsewhere? Drag & drop or select an existing monthly log CSV file to populate all days at once.
+                          </p>
+
+                          <div className="flex flex-col gap-2 pt-1">
+                            <div className="relative">
+                              <input 
+                                type="file" 
+                                accept=".csv" 
+                                onChange={handleFileUpload}
+                                className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                id="csv-file-picker"
+                              />
+                              <div className="border border-dashed border-[#2A2D35] hover:border-blue-500 rounded-xl p-3.5 text-center transition-all bg-blue-500/5 cursor-pointer">
+                                <span className="text-xs font-semibold text-blue-400 flex items-center justify-center gap-1.5">
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                  <span>Drag or Choose CSV File</span>
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <button 
+                              onClick={() => setShowCsvBox(!showCsvBox)}
+                              className="text-center text-[10px] text-gray-500 font-semibold hover:text-blue-400 cursor-pointer"
+                            >
+                              {showCsvBox ? "Collapse raw text field" : "Or paste manual CSV lines..."}
+                            </button>
+                          </div>
+
+                          {showCsvBox && (
+                            <div className="space-y-2 mt-2 animate-fadeIn">
+                              <textarea 
+                                rows={4} 
+                                placeholder='Date,Time Slot,Activity Type,Detailed Description of Work,Remarks&#10;"Thursday, January 01, 2026",12:00 to 2:00,Reading,"Ramakrishnan, E. V. Preface"'
+                                value={csvInput}
+                                onChange={(e) => setCsvInput(e.target.value)}
+                                className="w-full font-mono text-[10px] p-2 bg-[#1C2028] text-white border border-[#2A2D35] rounded-xl focus:outline-none"
+                              />
+                              <button 
+                                onClick={handleImportCSV}
+                                className="w-full bg-[#107C41] hover:bg-[#0E6C38] text-white rounded-xl py-1.5 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Parse Paste Code
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right: Google Sheets Integration */}
+                      <div className="space-y-3 bg-[#1C1F26]/30 border border-[#2A2D35] p-5 rounded-2xl flex flex-col justify-between">
+                        <div className="space-y-2.5">
+                          <div className="flex items-center justify-between border-b border-[#2A2D35] pb-2">
+                            <h3 className="font-display font-semibold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
+                              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                              <span>Live Google Sheets Sync</span>
+                            </h3>
+                            <button 
+                              onClick={() => setShowGoogleSyncCard(!showGoogleSyncCard)}
+                              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                showGoogleSyncCard ? 'bg-blue-600/20 text-blue-400 border-blue-500/30' : 'bg-[#2A2D35] text-gray-400 hover:text-white border-transparent'
+                              }`}
+                              title="Sync preferences"
+                            >
+                              <Settings className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <p className="text-xs text-gray-400 leading-relaxed font-sans">
+                            Export your currently loaded JRF work log table straight into an active sheet file with your signature block prefilled.
+                          </p>
+
+                          <div className="space-y-2 pt-1 text-xs">
+                            <button 
+                              onClick={handleSheetsSync}
+                              className="w-full bg-[#107C41] hover:bg-[#0E6C38] active:scale-[0.98] text-white py-2.5 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                            >
+                              <span>Sync Logs directly to Google Drive</span>
+                            </button>
+
+                            {syncingStatus && (
+                              <p className="text-[10px] font-semibold text-gray-300 italic border-l-2 border-blue-500 pl-2 mt-2 leading-relaxed animate-pulse">
+                                status: {syncingStatus}
+                              </p>
+                            )}
+
+                            {syncedSheetUrl && (
+                              <a 
+                                href={syncedSheetUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="text-[11px] font-bold text-emerald-400 hover:underline flex items-center gap-1 mt-2.5 bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10"
+                              >
+                                <Maximize2 className="w-3.5 h-3.5" />
+                                <span>Open spreadsheet document link</span>
+                              </a>
+                            )}
+                          </div>
+
+                          {showGoogleSyncCard && (
+                            <div className="bg-[#1D212A] p-3 rounded-xl border border-[#2A2D35] space-y-2 mt-3 animate-fadeIn">
+                              <p className="font-bold text-[10px] uppercase text-gray-400">OAuth verification token</p>
+                              <p className="text-[10px] text-gray-500 leading-normal">
+                                Connect workspace sheets via temporary access bearer credentials:
+                              </p>
+                              <input 
+                                type="password"
+                                placeholder="ya29.a0AfH..."
+                                value={googleAccessToken}
+                                onChange={(e) => setGoogleAccessToken(e.target.value)}
+                                className="w-full text-xs p-2 bg-[#1C1F26] border border-[#2A2D35] text-white rounded-lg focus:outline-none"
+                              />
+                              <div className="text-[10px] text-gray-500 italic leading-snug">
+                                Keeps security constraints secure under preview constraints.
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-
-          </div>          </div>
+              </div>
+            )}
+          </section>
 
           {/* Interactive Log Entry Toolbar & Search Filter */}
           <section id="interactive-log-workbench" className="bg-[#15171C] rounded-2xl border border-[#2A2D35] shadow-sm overflow-hidden">
@@ -1715,35 +2074,56 @@ export default function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-white">
                   {/* Left Controls */}
                   <div className="lg:col-span-5 space-y-4">
-                    {/* Option to select single entry or bulk entry - Elegant Segmented Tabs */}
+                    {/* Option to select single entry, bulk entry, or reading planner - Elegant Segmented Tabs */}
                     <div className="space-y-1.5">
                       <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                        Log entry mode:
+                        Log Entry Mode:
                       </label>
-                      <div className="grid grid-cols-2 p-1 bg-[#101216] border border-[#2A2D35] rounded-xl w-full mb-2 select-none">
+                      <div className="grid grid-cols-3 p-1 bg-[#101216] border border-[#2A2D35] rounded-xl w-full mb-2 select-none">
                         <button
                           type="button"
-                          onClick={() => setBuilderMultiDaySelect(false)}
-                          className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer border-none ${
-                            !builderMultiDaySelect 
+                          onClick={() => {
+                            setBuilderMultiDaySelect(false);
+                            setIsReadingPlanner(false);
+                          }}
+                          className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
+                            !builderMultiDaySelect && !isReadingPlanner
                               ? 'bg-blue-600 text-white shadow-md shadow-blue-950/40' 
-                              : 'bg-transparent text-gray-400 hover:text-gray-200'
+                              : 'bg-transparent text-gray-300 hover:text-white'
                           }`}
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Single Entry</span>
+                          <span>Single</span>
                         </button>
                         <button
                           type="button"
-                          onClick={() => setBuilderMultiDaySelect(true)}
-                          className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer border-none ${
-                            builderMultiDaySelect 
+                          onClick={() => {
+                            setBuilderMultiDaySelect(true);
+                            setIsReadingPlanner(false);
+                          }}
+                          className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
+                            builderMultiDaySelect && !isReadingPlanner
                               ? 'bg-amber-600 text-white shadow-md shadow-amber-950/40' 
-                              : 'bg-transparent text-gray-400 hover:text-gray-200'
+                              : 'bg-transparent text-gray-300 hover:text-white'
                           }`}
                         >
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>Bulk Entry (Multi-Day)</span>
+                          <span>Bulk</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBuilderMultiDaySelect(true);
+                            setIsReadingPlanner(true);
+                          }}
+                          className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
+                            builderMultiDaySelect && isReadingPlanner
+                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40' 
+                              : 'bg-transparent text-gray-300 hover:text-white'
+                          }`}
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>Reading</span>
                         </button>
                       </div>
                     </div>
@@ -1771,7 +2151,7 @@ export default function App() {
                             })}
                           </select>
                           <div className="text-xs text-gray-400 bg-[#101216] border border-[#2A2D35] rounded-lg py-2 px-3 flex-1 flex items-center justify-between">
-                            <span className="font-mono">Date: {`${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(builderDay).padStart(2, '0')}`}</span>
+                            <span className="font-mono">Date: {selectedYear}-{String(selectedMonth + 1).padStart(2, '0')}-{String(builderDay).padStart(2, '0')}</span>
                             {(() => {
                               const examDate = new Date(selectedYear, selectedMonth, builderDay);
                               const stat = getDayStatus(examDate, holidays, true, true);
@@ -1857,161 +2237,397 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Time Slot Selector */}
-                    <div className="space-y-1.5">
-                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Time Slot Segment:</label>
-                      <input 
-                        type="text"
-                        value={builderTimeSlot}
-                        onChange={(e) => setBuilderTimeSlot(e.target.value)}
-                        placeholder="e.g. 11:00 to 2:00"
-                        className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                      />
-                      <div className="flex flex-wrap gap-1.5 mt-1">
-                        <button
-                          type="button"
-                          onClick={() => setBuilderTimeSlot(slot1Hours)}
-                          className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
-                        >
-                          🌅 Slot 1 ({slot1Hours})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBuilderTimeSlot(slot2Hours)}
-                          className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
-                        >
-                          🌇 Slot 2 ({slot2Hours})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBuilderTimeSlot("11:00 to 5:00")}
-                          className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
-                        >
-                          🏢 Full Day (11:00 to 5:00)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBuilderTimeSlot("10:00 to 5:00")}
-                          className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
-                        >
-                          🏢 Full Day (10:00 to 5:00)
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Activity Type Dropdown badge selector */}
-                    <div className="space-y-1.5">
-                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Activity Classification:</label>
-                      <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-5 lg:grid-cols-3 gap-1 px-1">
-                        {["Reading", "Mentoring", "Department Work", "Leave", "Other Work"].map((activity) => {
-                          const isSelected = builderActivityType === activity;
-                          return (
+                    {!isReadingPlanner ? (
+                      <>
+                        {/* Time Slot Selector */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Time Slot Segment:</label>
+                          <input 
+                            type="text"
+                            value={builderTimeSlot}
+                            onChange={(e) => setBuilderTimeSlot(e.target.value)}
+                            placeholder="e.g. 11:00 to 2:00"
+                            className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                          />
+                          <div className="flex flex-wrap gap-1.5 mt-1">
                             <button
-                              key={activity}
                               type="button"
-                              onClick={() => setBuilderActivityType(activity)}
-                              className={`py-1 px-1.5 text-[10px] font-semibold rounded-md text-left transition-all border ${
-                                isSelected 
-                                  ? activity === "Reading" ? 'bg-blue-950/40 border-blue-500 text-blue-400' :
-                                    activity === "Mentoring" ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' :
-                                    activity === "Department Work" ? 'bg-purple-950/40 border-purple-500 text-purple-400' :
-                                    activity === "Leave" ? 'bg-rose-950/40 border-rose-500 text-rose-400' :
-                                    'bg-gray-800 border-gray-600 text-gray-150'
-                                  : 'bg-[#101216] border-[#2A2D35] text-gray-450 hover:text-gray-200 hover:border-gray-750'
-                              }`}
+                              onClick={() => setBuilderTimeSlot(slot1Hours)}
+                              className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
                             >
-                              <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5" style={{
-                                backgroundColor: 
-                                  activity === "Reading" ? "#3b82f6" :
-                                  activity === "Mentoring" ? "#10b981" :
-                                  activity === "Department Work" ? "#a855f7" :
-                                  activity === "Leave" ? "#f43f5e" : "#9ca3af"
-                              }} />
-                              {activity}
+                              🌅 Slot 1 ({slot1Hours})
                             </button>
-                          );
-                        })}
+                            <button
+                              type="button"
+                              onClick={() => setBuilderTimeSlot(slot2Hours)}
+                              className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
+                            >
+                              🌇 Slot 2 ({slot2Hours})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBuilderTimeSlot("11:00 to 5:00")}
+                              className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
+                            >
+                              🏢 Full Day (11:00 to 5:00)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBuilderTimeSlot("10:00 to 5:00")}
+                              className="bg-[#2A2D35] hover:bg-[#343842] text-[10px] text-gray-300 rounded px-2 py-0.5 font-semibold transition-all"
+                            >
+                              🏢 Full Day (10:00 to 5:00)
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Activity Type Dropdown badge selector */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Activity Classification:</label>
+                          <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-5 lg:grid-cols-3 gap-1 px-1">
+                            {["Reading", "Mentoring", "Department Work", "Leave", "Other Work"].map((activity) => {
+                              const isSelected = builderActivityType === activity;
+                              return (
+                                <button
+                                  key={activity}
+                                  type="button"
+                                  onClick={() => setBuilderActivityType(activity)}
+                                  className={`py-1 px-1.5 text-[10px] font-semibold rounded-md text-left transition-all border ${
+                                    isSelected 
+                                      ? activity === "Reading" ? 'bg-blue-950/40 border-blue-500 text-blue-400' :
+                                        activity === "Mentoring" ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' :
+                                        activity === "Department Work" ? 'bg-purple-950/40 border-purple-500 text-purple-400' :
+                                        activity === "Leave" ? 'bg-rose-950/40 border-rose-500 text-rose-400' :
+                                        'bg-gray-800 border-gray-600 text-gray-150'
+                                      : 'bg-[#101216] border-[#2A2D35] text-gray-450 hover:text-gray-200 hover:border-gray-750'
+                                  }`}
+                                >
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5" style={{
+                                    backgroundColor: 
+                                      activity === "Reading" ? "#3b82f6" :
+                                      activity === "Mentoring" ? "#10b981" :
+                                      activity === "Department Work" ? "#a855f7" :
+                                      activity === "Leave" ? "#f43f5e" : "#9ca3af"
+                                  }} />
+                                  {activity}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      /* Reading Planner Notice */
+                      <div className="bg-emerald-950/20 border border-emerald-500/20 rounded-xl p-3 space-y-2 text-[11px] text-emerald-400">
+                        <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-[10px]">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Automated Schedules Active</span>
+                        </div>
+                        <p className="text-gray-300 leading-normal">
+                          For each day selected, the planner automatically generates work logs for both mandatory daily reading slots:
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 text-center font-mono font-bold pt-1">
+                          <div className="bg-[#101216] p-1.5 rounded border border-[#2A2D35]">
+                            🌅 {slot1Hours}
+                          </div>
+                          <div className="bg-[#101216] p-1.5 rounded border border-[#2A2D35]">
+                            🌇 {slot2Hours}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
-                  {/* Right Description & Presets */}
+                  {/* Right Column: Dynamic Form depending on mode */}
                   <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
-                    {/* Free-text input */}
-                    <div className="space-y-1.5 flex-1 flex flex-col">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                          Detailed JRF Work Description:
-                        </label>
-                        <span className="text-[10px] text-gray-500">Length: {builderDescription.length} chars</span>
-                      </div>
-                      <textarea
-                        rows={3}
-                        value={builderDescription}
-                        onChange={(e) => setBuilderDescription(e.target.value)}
-                        placeholder="Write dynamic academic details or select presets below to instantly prefill..."
-                        className="w-full flex-1 min-h-[90px] bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-xl p-3 focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-600 font-serif italic leading-relaxed"
-                      />
-                    </div>
+                    {!isReadingPlanner ? (
+                      /* Standard Builder View */
+                      <>
+                        {/* Free-text input */}
+                        <div className="space-y-1.5 flex-1 flex flex-col">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              Detailed JRF Work Description:
+                            </label>
+                            <span className="text-[10px] text-gray-500">Length: {builderDescription.length} chars</span>
+                          </div>
+                          <textarea
+                            rows={3}
+                            value={builderDescription}
+                            onChange={(e) => setBuilderDescription(e.target.value)}
+                            placeholder="Write dynamic academic details or select presets below to instantly prefill..."
+                            className="w-full flex-1 min-h-[90px] bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-xl p-3 focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-600 font-serif italic leading-relaxed"
+                          />
+                        </div>
 
-                    {/* JRF Scholar Prepopulated Fast Templates! */}
-                    <div className="space-y-1.5">
-                      <span className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">✨ Quick Scholar Description Presets:</span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {[
-                          { title: "📖 Lit Review", desc: "Conducted extensive primary textual reading, synthesizing relevant historical secondary studies." },
-                          { title: "📝 Thesis Writing", desc: "Formulated chapter outlines, annotated bibliography indexes, and compiled textual citations." },
-                          { title: "🎓 Student Mentorship", desc: "Guided undergraduate dissertation scholars and reviewed draft assignments." },
-                          { title: "🏛️ Academic Assistance", desc: "Assisted JRF coordinator with exam duty rosters and departmental documentation." },
-                          { title: "📊 Library Archiving", desc: "Retrieved rare manuscripts from the main college repository to catalogue references." },
-                          { title: "✍️ Article Proofreading", desc: "Reviewed proof copies of upcoming reviews and verified bibliographic indexes." }
-                        ].map((preset, index) => (
+                        {/* JRF Scholar Prepopulated Fast Templates! */}
+                        <div className="space-y-1.5">
+                          <span className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">✨ Quick Scholar Description Presets:</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {[
+                              { title: "📖 Lit Review", desc: "Conducted extensive primary textual reading, synthesizing relevant historical secondary studies." },
+                              { title: "📝 Thesis Writing", desc: "Formulated chapter outlines, annotated bibliography indexes, and compiled textual citations." },
+                              { title: "🎓 Student Mentorship", desc: "Guided undergraduate dissertation scholars and reviewed draft assignments." },
+                              { title: "🏛️ Academic Assistance", desc: "Assisted JRF coordinator with exam duty rosters and departmental documentation." },
+                              { title: "📊 Library Archiving", desc: "Retrieved rare manuscripts from the main college repository to catalogue references." },
+                              { title: "✍️ Article Proofreading", desc: "Reviewed proof copies of upcoming reviews and verified bibliographic indexes." }
+                            ].map((preset, index) => (
+                              <button
+                                key={index}
+                                type="button"
+                                onClick={() => {
+                                  setBuilderDescription(preset.desc);
+                                  if (preset.title.includes("Lit") || preset.title.includes("Library") || preset.title.includes("Thesis") || preset.title.includes("Article")) {
+                                    setBuilderActivityType("Reading");
+                                  } else if (preset.title.includes("Student")) {
+                                    setBuilderActivityType("Mentoring");
+                                  } else {
+                                    setBuilderActivityType("Department Work");
+                                  }
+                                }}
+                                className="p-2 text-left bg-[#101216] hover:bg-[#1E212A] border border-[#2A2D35] hover:border-gray-700 rounded-lg text-[10px] text-gray-300 hover:text-white transition-all space-y-0.5 leading-tight"
+                              >
+                                <span className="font-bold text-blue-400 block">{preset.title}</span>
+                                <span className="text-gray-500 text-[9px] line-clamp-1 italic">{preset.desc}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Remarks and Save */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end pt-2">
+                          <div className="sm:col-span-8 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Remarks / PP. Range / Notes:</label>
+                            <input 
+                              type="text"
+                              value={builderRemarks}
+                              onChange={(e) => setBuilderRemarks(e.target.value)}
+                              placeholder="e.g. PP. 100-112, Draft Approved"
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                          
+                          <div className="sm:col-span-4">
+                            <button
+                              type="button"
+                              onClick={handleAddRichEntries}
+                              className="w-full py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 shadow-md shadow-blue-900/30 transition-all cursor-pointer border-none"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Insert into Logbook</span>
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      /* Smart Book Reading Planner View */
+                      <div className="space-y-4 animate-in fade-in duration-300">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                          <div className="sm:col-span-6 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              📚 Book / Research Resource Title:
+                            </label>
+                            <input 
+                              type="text"
+                              value={plannerBookTitle}
+                              onChange={(e) => {
+                                setPlannerBookTitle(e.target.value);
+                                setPlannerPreviewPlan(null); // Clear preview to force regenerate
+                              }}
+                              placeholder="e.g. Foucault's Archeology of Knowledge..."
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-600 font-sans"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-3 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              🏁 Start Page:
+                            </label>
+                            <input 
+                              type="number"
+                              min={1}
+                              value={plannerStartPage}
+                              onChange={(e) => {
+                                setPlannerStartPage(Math.max(1, Number(e.target.value)));
+                                setPlannerPreviewPlan(null);
+                              }}
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-3 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              🏁 End Page:
+                            </label>
+                            <input 
+                              type="number"
+                              min={1}
+                              value={plannerEndPage}
+                              onChange={(e) => {
+                                setPlannerEndPage(Math.max(1, Number(e.target.value)));
+                                setPlannerPreviewPlan(null);
+                              }}
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                          <div className="sm:col-span-6 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                                🚫 Page Exclusions (indices, indexes, etc):
+                              </label>
+                              <span className="text-[9px] text-amber-500 font-mono">e.g. 1-12, 110, 145-150</span>
+                            </div>
+                            <input 
+                              type="text"
+                              value={plannerExcludePages}
+                              onChange={(e) => {
+                                setPlannerExcludePages(e.target.value);
+                                setPlannerPreviewPlan(null);
+                              }}
+                              placeholder="Comma-separated pages/ranges to skip..."
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-600"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-6 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              ✍️ Log Writing Style Vocabulary:
+                            </label>
+                            <select
+                              value={plannerDescriptionStyle}
+                              onChange={(e) => {
+                                setPlannerDescriptionStyle(e.target.value);
+                                setPlannerPreviewPlan(null);
+                              }}
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            >
+                              <option value="academic">🎓 Comprehensive Intellectual Lit Synthesis</option>
+                              <option value="analytical">📊 Critical Summary & Thematic Notes</option>
+                              <option value="detailed">✍️ Reference Reading & Resource Bibliographies</option>
+                              <option value="standard">📖 Simple/Standard Book Reading Log</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                          {/* Randomization distribution select */}
+                          <div className="sm:col-span-7 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              📦 Page Allocation Distribution Algorithm:
+                            </label>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPlannerRandomize(true);
+                                  setPlannerPreviewPlan(null);
+                                }}
+                                className={`flex-1 py-1.5 px-2 rounded-lg text-center font-semibold text-[10px] sm:text-xs border cursor-pointer transition-all ${
+                                  plannerRandomize 
+                                    ? 'bg-blue-600/10 border-blue-500 text-blue-400' 
+                                    : 'bg-[#101216] border-[#2A2D35] text-gray-400 hover:text-gray-200'
+                                }`}
+                              >
+                                🎲 Random Pages per Day
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPlannerRandomize(false);
+                                  setPlannerPreviewPlan(null);
+                                }}
+                                className={`flex-1 py-1.5 px-2 rounded-lg text-center font-semibold text-[10px] sm:text-xs border cursor-pointer transition-all ${
+                                  !plannerRandomize 
+                                    ? 'bg-blue-600/10 border-blue-500 text-blue-400' 
+                                    : 'bg-[#101216] border-[#2A2D35] text-gray-400 hover:text-gray-200'
+                                }`}
+                              >
+                                ⚖️ Even Pages per Slot
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Collision action */}
+                          <div className="sm:col-span-12 md:col-span-5 space-y-1.5">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              🛡️ Duplicate Calendar Collision Rules:
+                            </label>
+                            <select
+                              value={plannerCollisionResolution}
+                              onChange={(e) => setPlannerCollisionResolution(e.target.value as any)}
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            >
+                              <option value="parallel">➕ Keep concurrent parallel entries</option>
+                              <option value="overwrite">💥 destructive overwrite existing logs</option>
+                              <option value="skip">🚯 skip days with existing logs</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Actions to Preview vs Submit */}
+                        <div className="flex flex-wrap gap-2.5 pt-1.5">
                           <button
-                            key={index}
                             type="button"
-                            onClick={() => {
-                              setBuilderDescription(preset.desc);
-                              if (preset.title.includes("Lit") || preset.title.includes("Library") || preset.title.includes("Thesis") || preset.title.includes("Article")) {
-                                setBuilderActivityType("Reading");
-                              } else if (preset.title.includes("Student")) {
-                                setBuilderActivityType("Mentoring");
-                              } else {
-                                setBuilderActivityType("Department Work");
-                              }
-                            }}
-                            className="p-2 text-left bg-[#101216] hover:bg-[#1E212A] border border-[#2A2D35] hover:border-gray-700 rounded-lg text-[10px] text-gray-300 hover:text-white transition-all space-y-0.5 leading-tight"
+                            onClick={handleGenerateReadingPlanPreview}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 border-none rounded-lg text-xs flex items-center gap-1.5 shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
                           >
-                            <span className="font-bold text-blue-400 block">{preset.title}</span>
-                            <span className="text-gray-500 text-[9px] line-clamp-1 italic">{preset.desc}</span>
+                            <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                            <span>Generate Preview Plan</span>
                           </button>
-                        ))}
-                      </div>
-                    </div>
 
-                    {/* Remarks and Save */}
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end pt-2">
-                      <div className="sm:col-span-8 space-y-1.5">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Remarks / PP. Range / Notes:</label>
-                        <input 
-                          type="text"
-                          value={builderRemarks}
-                          onChange={(e) => setBuilderRemarks(e.target.value)}
-                          placeholder="e.g. PP. 100-112, Draft Approved"
-                          className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
+                          {plannerPreviewPlan && plannerPreviewPlan.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleExecuteReadingPlan}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 border-none rounded-lg text-xs flex items-center gap-1.5 shadow-md shadow-blue-900/30 transition-all cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Confirm & Insert {plannerPreviewPlan.filter(p => p.pages.length > 0).length} Entries Into Logbook</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Interactive Preview Block */}
+                        {plannerPreviewPlan && (
+                          <div className="border border-emerald-500/20 rounded-xl p-3 bg-[#101216] text-xs space-y-2 max-h-[190px] overflow-y-auto animate-in fade-in duration-200">
+                            <div className="flex items-center justify-between pb-1.5 border-b border-[#2A2D35] mb-2">
+                              <span className="font-bold text-[10px] text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-yellow-300" /> Calculated Smart Reading Distribution
+                              </span>
+                              <span className="text-[10px] text-gray-500 font-mono">
+                                Total active entries: {plannerPreviewPlan.filter(p => p.pages.length > 0).length} slots
+                              </span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {plannerPreviewPlan.map((pPlan, pIdx) => {
+                                const isEmpty = pPlan.pages.length === 0;
+                                return (
+                                  <div 
+                                    key={pIdx} 
+                                    className={`p-2 rounded-lg border text-[11px] transition-all ${
+                                      isEmpty 
+                                        ? 'bg-[#1C1F26]/30 border-dashed border-[#2A2D35]/50 opacity-40'
+                                        : 'bg-emerald-950/10 border-emerald-500/20'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between font-mono font-bold text-gray-300 mb-0.5">
+                                      <span>📅 Day {String(pPlan.day).padStart(2, '0')} ({pPlan.slot})</span>
+                                      <span className={`${isEmpty ? 'text-gray-600 text-[10px]' : 'text-emerald-400 bg-emerald-500/10 px-1 rounded text-[10px]'}`}>
+                                        {isEmpty ? 'No assignment' : pPlan.pagesText}
+                                      </span>
+                                    </div>
+                                    <p className="text-gray-400 font-serif italic line-clamp-1">{pPlan.description}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      
-                      <div className="sm:col-span-4">
-                        <button
-                          type="button"
-                          onClick={handleAddRichEntries}
-                          className="w-full py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 shadow-md shadow-blue-900/30 transition-all cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Insert into Logbook</span>
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2109,7 +2725,7 @@ export default function App() {
                                 }
                               }}
                               className="w-full bg-[#15171C] text-xs font-semibold text-white border border-[#2A2D35] rounded-md px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors"
-                              style={{ colorScheme: 'dark' }}
+                              style={{ colorScheme: 'light' }}
                               title="Click to choose a custom date for this entry"
                             />
                             <div className="flex items-center justify-between px-1">
