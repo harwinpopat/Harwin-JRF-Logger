@@ -1,0 +1,6 @@
+{
+  "name": "JRF Work Logger",
+  "description": "An automated monthly log planner and work logger for PhD/JRF scholars, featuring automatic holiday/weekend exclusion, search filtering, custom sheet import, Google Sheets syncing, and university-standard print views.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
