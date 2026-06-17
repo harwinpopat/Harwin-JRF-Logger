@@ -784,7 +784,7 @@ export default function App() {
     <div id="jrf-app-container" className="min-h-screen bg-[#0F1115] text-[#E0E0E0] font-sans antialiased">
       
       {/* ⚠️ Print-only Layout containing pristine official formatting */}
-      <div className={`${showPrintView ? 'block bg-gray-100 min-h-screen py-10 px-4' : 'hidden print:block'} w-full`}>
+      <div className={`${showPrintView ? 'block bg-gray-100 min-h-screen py-10 px-4 print:bg-transparent print:py-0 print:px-0' : 'hidden print:block'} w-full`}>
         {showPrintView && (
           <div className="print:hidden max-w-4xl mx-auto mb-8 bg-blue-50 border border-blue-200 text-blue-900 p-6 rounded-xl flex flex-col gap-4 shadow-md leading-relaxed">
             <h3 className="font-bold text-lg flex items-center gap-2">
@@ -817,25 +817,31 @@ export default function App() {
         )}
         
         {/* Actual Printable Document Container */}
-        <div className={`w-full max-w-4xl mx-auto px-10 py-12 bg-white text-black leading-relaxed ${showPrintView ? 'shadow-2xl rounded-sm border border-gray-300' : ''}`}>
-          <div className="text-center border-b-4 border-double border-gray-800 pb-4 mb-6">
-          <h1 className="text-2xl font-serif font-extrabold uppercase tracking-wide">
+        <div className={`w-full max-w-4xl mx-auto px-6 py-6 bg-white text-black leading-relaxed ${showPrintView ? 'shadow-2xl rounded-sm border border-gray-300 print:shadow-none print:border-none print:rounded-none' : ''}`}>
+          <style>{`
+            @media print {
+              @page { size: auto; margin: 15mm 10mm; }
+              body { -webkit-print-color-adjust: exact; }
+            }
+          `}</style>
+          <div className="text-center border-b-4 border-double border-gray-800 pb-2 mb-4">
+          <h1 className="text-xl font-serif font-extrabold uppercase tracking-wide">
             {scholar.university}
           </h1>
-          <p className="text-sm font-semibold tracking-wide text-gray-700 uppercase mt-1">
+          <p className="text-xs font-semibold tracking-wide text-gray-700 uppercase mt-0.5">
             {scholar.department}
           </p>
-          <div className="border-t border-gray-400 my-2"></div>
-          <h2 className="text-lg font-bold font-serif uppercase tracking-widest text-[#111827]">
+          <div className="border-t border-gray-400 my-1"></div>
+          <h2 className="text-sm font-bold font-serif uppercase tracking-widest text-[#111827]">
             Monthly Progress & Attendance Log of JRF Scholar
           </h2>
-          <p className="text-sm italic text-gray-600 mt-0.5">
+          <p className="text-xs italic text-gray-600 mt-0.5">
             For the Month of <span className="font-bold border-b border-black px-2">{selectedMonthName}, {selectedYear}</span>
           </p>
         </div>
 
         {/* Scholar Meta Info Panel for printing */}
-        <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs border border-gray-300 p-4 rounded-md mb-6 bg-slate-50/50">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-[11px] border border-gray-300 p-3 rounded-md mb-4 bg-slate-50/50">
           <div><p><strong className="uppercase tracking-wider text-gray-600">Name of Scholar:</strong> <span className="font-medium text-black">{scholar.name}</span></p></div>
           <div><p><strong className="uppercase tracking-wider text-gray-600">Designation:</strong> <span className="font-medium text-black">{scholar.designation}</span></p></div>
           <div><p><strong className="uppercase tracking-wider text-gray-600">Department:</strong> <span className="font-medium text-black">{scholar.department}</span></p></div>
@@ -846,14 +852,14 @@ export default function App() {
         </div>
 
         {/* Print table */}
-        <table className="w-full border-collapse border border-gray-400 text-xs text-left mb-12">
+        <table className="w-full border-collapse border border-gray-400 text-[11px] text-left mb-8">
           <thead>
-            <tr className="bg-gray-100 uppercase text-[10px] tracking-wider text-gray-800">
-              <th className="border border-gray-400 p-2 w-[180px]">Date & Working Day</th>
-              <th className="border border-gray-400 p-2 w-[110px]">Time Slot</th>
-              <th className="border border-gray-400 p-2 w-[130px]">Activity Type</th>
-              <th className="border border-gray-400 p-2">Detailed Description of Work Done</th>
-              <th className="border border-gray-400 p-2 w-[140px]">Scholar/Guide Remarks</th>
+            <tr className="bg-gray-100 uppercase text-[9px] tracking-wider text-gray-800">
+              <th className="border border-gray-400 p-1.5 w-[160px]">Date & Working Day</th>
+              <th className="border border-gray-400 p-1.5 w-[100px]">Time Slot</th>
+              <th className="border border-gray-400 p-1.5 w-[120px]">Activity Type</th>
+              <th className="border border-gray-400 p-1.5">Detailed Description of Work Done</th>
+              <th className="border border-gray-400 p-1.5 w-[120px]">Remarks</th>
             </tr>
           </thead>
           <tbody>
@@ -865,11 +871,11 @@ export default function App() {
 
               return (
                 <tr key={e.id} className="hover:bg-slate-50/50">
-                  <td className="border border-gray-400 p-2 font-medium bg-slate-50/20">{formattedDateString}, {d.getFullYear()}</td>
-                  <td className="border border-gray-400 p-2 text-gray-800 tabular-nums">{e.timeSlot}</td>
-                  <td className="border border-gray-400 p-2 font-semibold text-slate-800">{e.activityType || "-"}</td>
-                  <td className="border border-gray-400 p-2 whitespace-pre-line text-black font-serif leading-normal">{e.description || "— No Work Performed / Leave —"}</td>
-                  <td className="border border-gray-400 p-2 text-gray-700 italic">{e.remarks || "-"}</td>
+                  <td className="border border-gray-400 p-1.5 font-medium bg-slate-50/20">{formattedDateString}, {d.getFullYear()}</td>
+                  <td className="border border-gray-400 p-1.5 text-gray-800 tabular-nums">{e.timeSlot}</td>
+                  <td className="border border-gray-400 p-1.5 font-semibold text-slate-800">{e.activityType || "-"}</td>
+                  <td className="border border-gray-400 p-1.5 whitespace-pre-line text-black font-serif leading-tight">{e.description || "— No Work Performed / Leave —"}</td>
+                  <td className="border border-gray-400 p-1.5 text-gray-700 italic leading-tight">{e.remarks || "-"}</td>
                 </tr>
               );
             })}
