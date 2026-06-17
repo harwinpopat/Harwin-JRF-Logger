@@ -92,8 +92,8 @@ export default function App() {
 
 
   // --- UI Controls State ---
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
-  const [selectedMonth, setSelectedMonth] = useState<number>(0); // 0 = Jan
+  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth());
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingScholar, setEditingScholar] = useState<boolean>(false);
   const [csvInput, setCsvInput] = useState<string>('');
@@ -103,7 +103,7 @@ export default function App() {
   
   // --- Rich Custom Entry Builder State ---
   const [showEntryBuilder, setShowEntryBuilder] = useState<boolean>(false);
-  const [builderDay, setBuilderDay] = useState<number>(1);
+  const [builderDay, setBuilderDay] = useState<number>(() => new Date().getDate());
   const [builderTimeSlot, setBuilderTimeSlot] = useState<string>("11:00 to 2:00");
   const [builderActivityType, setBuilderActivityType] = useState<string>("Reading");
   const [builderDescription, setBuilderDescription] = useState<string>("");
@@ -113,6 +113,17 @@ export default function App() {
   
   // Bulk Selection State
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+
+  // Default builderDay to today's date if it fits in selected month, otherwise default to 1
+  useEffect(() => {
+    const today = new Date();
+    if (today.getFullYear() === selectedYear && today.getMonth() === selectedMonth) {
+      const maxDays = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+      setBuilderDay(today.getDate() <= maxDays ? today.getDate() : 1);
+    } else {
+      setBuilderDay(1);
+    }
+  }, [selectedYear, selectedMonth, showEntryBuilder]);
   
   // Custom slots config
   const [slot1Hours, setSlot1Hours] = useState<string>("11:00 to 2:00");
@@ -188,7 +199,6 @@ export default function App() {
             if (cloudScholar) setScholar(cloudScholar);
             if (cloudHolidays) setHolidays(cloudHolidays);
             if (cloudEntries) setEntries(cloudEntries);
-            triggerAlert("Cloud Sync Activated", "Successfully retrieved and synchronized your saved JRF work logs from the Cloud!");
           } else {
             // First time auth: Back up local state to the cloud
             await saveScholarToCloud(currentUser.uid, scholar);
@@ -337,7 +347,6 @@ export default function App() {
       await saveEntriesToCloud(user.uid, entries);
       setCloudSyncStatus('saved');
       setCloudLastSaved(new Date().toLocaleTimeString());
-      triggerAlert("Sync Uploaded", "Successfully forced an upload check. All profile metadata, custom holidays, and monthly entries reside safely on the cloud.");
     } catch (err: any) {
       triggerAlert("Sync Failed", "Could not backup to the Cloud: " + (err.message || err));
       setCloudSyncStatus('error');
@@ -795,7 +804,7 @@ export default function App() {
               To print this report cleanly <strong>without any AI Studio menus or headers</strong> included, please follow these steps:
             </p>
             <ol className="list-decimal list-inside text-sm space-y-2 ml-2 font-medium">
-              <li>Open this app in a <strong>standalone tab</strong> (click the "Open app in new tab" icon <ExternalLink className="w-3 h-3 inline-block mx-0.5 text-blue-600"/> in the top-right corner of the AI Studio preview window).</li>
+              <li>Open this app in a <strong>standalone tab</strong> (you can <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold underline hover:text-blue-800">click here to open instantly</a> or use the "Open in new tab" key in AI Studio).</li>
               <li>Once in the new tab, click the <strong>Print Monthly Report</strong> button again.</li>
               <li>Or simply press <strong>Cmd+P</strong> (Mac) or <strong>Ctrl+P</strong> (Windows) in the new tab.</li>
             </ol>
@@ -806,6 +815,14 @@ export default function App() {
               >
                 <Printer className="w-4 h-4" /> Try Printing Now
               </button>
+              <a 
+                href={window.location.href} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2 shadow-sm"
+              >
+                <ExternalLink className="w-4 h-4" /> Open Standalone Tab
+              </a>
               <button 
                 onClick={() => setShowPrintView(false)}
                 className="bg-white hover:bg-gray-50 border border-blue-200 text-blue-800 px-5 py-2.5 rounded-lg font-semibold text-sm transition-colors shadow-sm"
@@ -824,42 +841,42 @@ export default function App() {
               body { -webkit-print-color-adjust: exact; }
             }
           `}</style>
-          <div className="text-center border-b-4 border-double border-gray-800 pb-2 mb-4">
-          <h1 className="text-xl font-serif font-extrabold uppercase tracking-wide">
+          <div className="text-center border-b-2 border-gray-800 pb-1.5 mb-2.5">
+          <h1 className="text-base font-serif font-extrabold uppercase tracking-wide">
             {scholar.university}
           </h1>
-          <p className="text-xs font-semibold tracking-wide text-gray-700 uppercase mt-0.5">
+          <p className="text-[10px] font-semibold tracking-wide text-gray-700 uppercase mt-0.5">
             {scholar.department}
           </p>
-          <div className="border-t border-gray-400 my-1"></div>
-          <h2 className="text-sm font-bold font-serif uppercase tracking-widest text-[#111827]">
+          <div className="border-t border-gray-300 my-0.5"></div>
+          <h2 className="text-xs font-bold font-serif uppercase tracking-widest text-[#111827]">
             Monthly Progress & Attendance Log of JRF Scholar
           </h2>
-          <p className="text-xs italic text-gray-600 mt-0.5">
+          <p className="text-[10px] italic text-gray-600 mt-0.5">
             For the Month of <span className="font-bold border-b border-black px-2">{selectedMonthName}, {selectedYear}</span>
           </p>
         </div>
 
         {/* Scholar Meta Info Panel for printing */}
-        <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-[11px] border border-gray-300 p-3 rounded-md mb-4 bg-slate-50/50">
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Name of Scholar:</strong> <span className="font-medium text-black">{scholar.name}</span></p></div>
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Designation:</strong> <span className="font-medium text-black">{scholar.designation}</span></p></div>
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Department:</strong> <span className="font-medium text-black">{scholar.department}</span></p></div>
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Guide Supervisor:</strong> <span className="font-medium text-black">{scholar.guide}</span></p></div>
-          <div className="col-span-2"><p><strong className="uppercase tracking-wider text-gray-600">Research Topic:</strong> <span className="font-medium text-black">{scholar.researchTopic}</span></p></div>
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Official Hours:</strong> <span className="font-medium text-black">{scholar.workingHours}</span></p></div>
-          <div><p><strong className="uppercase tracking-wider text-gray-600">Recess Interval:</strong> <span className="font-medium text-black">{scholar.recess}</span></p></div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-[10px] border border-gray-300 p-2 rounded-md mb-2.5 bg-slate-50/50">
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Name of Scholar:</strong> <span className="font-medium text-black">{scholar.name}</span></p></div>
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Designation:</strong> <span className="font-medium text-black">{scholar.designation}</span></p></div>
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Department:</strong> <span className="font-medium text-black">{scholar.department}</span></p></div>
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Guide Supervisor:</strong> <span className="font-medium text-black">{scholar.guide}</span></p></div>
+          <div className="col-span-2"><p><strong className="uppercase tracking-wider text-gray-500">Research Topic:</strong> <span className="font-medium text-black">{scholar.researchTopic}</span></p></div>
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Official Hours:</strong> <span className="font-medium text-black">{scholar.workingHours}</span></p></div>
+          <div><p><strong className="uppercase tracking-wider text-gray-500">Recess Interval:</strong> <span className="font-medium text-black">{scholar.recess}</span></p></div>
         </div>
 
         {/* Print table */}
-        <table className="w-full border-collapse border border-gray-400 text-[11px] text-left mb-8">
+        <table className="w-full border-collapse border border-gray-400 text-[10px] text-left mb-6">
           <thead>
-            <tr className="bg-gray-100 uppercase text-[9px] tracking-wider text-gray-800">
-              <th className="border border-gray-400 p-1.5 w-[160px]">Date & Working Day</th>
-              <th className="border border-gray-400 p-1.5 w-[100px]">Time Slot</th>
-              <th className="border border-gray-400 p-1.5 w-[120px]">Activity Type</th>
-              <th className="border border-gray-400 p-1.5">Detailed Description of Work Done</th>
-              <th className="border border-gray-400 p-1.5 w-[120px]">Remarks</th>
+            <tr className="bg-gray-100 uppercase text-[8px] tracking-wider text-gray-800">
+              <th className="border border-gray-400 p-1 w-[150px]">Date & Working Day</th>
+              <th className="border border-gray-400 p-1 w-[90px]">Time Slot</th>
+              <th className="border border-gray-400 p-1 w-[110px]">Activity Type</th>
+              <th className="border border-gray-400 p-1">Detailed Description of Work Done</th>
+              <th className="border border-gray-400 p-1 w-[110px]">Remarks</th>
             </tr>
           </thead>
           <tbody>
@@ -871,11 +888,11 @@ export default function App() {
 
               return (
                 <tr key={e.id} className="hover:bg-slate-50/50">
-                  <td className="border border-gray-400 p-1.5 font-medium bg-slate-50/20">{formattedDateString}, {d.getFullYear()}</td>
-                  <td className="border border-gray-400 p-1.5 text-gray-800 tabular-nums">{e.timeSlot}</td>
-                  <td className="border border-gray-400 p-1.5 font-semibold text-slate-800">{e.activityType || "-"}</td>
-                  <td className="border border-gray-400 p-1.5 whitespace-pre-line text-black font-serif leading-tight">{e.description || "— No Work Performed / Leave —"}</td>
-                  <td className="border border-gray-400 p-1.5 text-gray-700 italic leading-tight">{e.remarks || "-"}</td>
+                  <td className="border border-gray-400 p-1 font-medium bg-slate-50/20">{formattedDateString}, {d.getFullYear()}</td>
+                  <td className="border border-gray-400 p-1 text-gray-800 tabular-nums">{e.timeSlot}</td>
+                  <td className="border border-gray-400 p-1 font-semibold text-slate-800">{e.activityType || "-"}</td>
+                  <td className="border border-gray-400 p-1 whitespace-pre-line text-black font-serif leading-tight">{e.description || "— No Work Performed / Leave —"}</td>
+                  <td className="border border-gray-400 p-1 text-gray-700 italic leading-tight">{e.remarks || "-"}</td>
                 </tr>
               );
             })}
@@ -939,6 +956,16 @@ export default function App() {
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Full Reset</span>
             </button>
+            <a 
+              href={window.location.href} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-[#38BDF8] hover:text-white hover:bg-[#1C1F26] px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all duration-200 border border-sky-400/20"
+              title="Open the app in a new clean window for direct printing and full-screen JRF editing"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open Clean Tab</span>
+            </a>
             <a 
               href="https://docs.google.com/spreadsheets" 
               target="_blank" 
@@ -1684,22 +1711,37 @@ export default function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-white">
                   {/* Left Controls */}
                   <div className="lg:col-span-5 space-y-4">
-                    {/* Multi-day toggle */}
-                    <div className="flex items-center justify-between p-2.5 bg-[#101216] rounded-xl border border-[#2A2D35]">
-                      <span className="text-xs text-gray-300 font-medium">Bulk Mode (Same activity for multiple days)</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBuilderMultiDaySelect(!builderMultiDaySelect);
-                        }}
-                        className={`text-xs px-2.5 py-1 rounded font-bold transition-all ${
-                          builderMultiDaySelect 
-                            ? 'bg-amber-600 text-white shadow-sm shadow-amber-900/35' 
-                            : 'bg-[#2A2D35] text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        {builderMultiDaySelect ? "Bulk Enabled" : "Single Day"}
-                      </button>
+                    {/* Option to select single entry or bulk entry - Elegant Segmented Tabs */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                        Log entry mode:
+                      </label>
+                      <div className="grid grid-cols-2 p-1 bg-[#101216] border border-[#2A2D35] rounded-xl w-full mb-2 select-none">
+                        <button
+                          type="button"
+                          onClick={() => setBuilderMultiDaySelect(false)}
+                          className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer border-none ${
+                            !builderMultiDaySelect 
+                              ? 'bg-blue-600 text-white shadow-md shadow-blue-950/40' 
+                              : 'bg-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Single Entry</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBuilderMultiDaySelect(true)}
+                          className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer border-none ${
+                            builderMultiDaySelect 
+                              ? 'bg-amber-600 text-white shadow-md shadow-amber-950/40' 
+                              : 'bg-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Bulk Entry (Multi-Day)</span>
+                        </button>
+                      </div>
                     </div>
 
                     {!builderMultiDaySelect ? (
