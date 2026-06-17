@@ -834,11 +834,12 @@ export default function App() {
         )}
         
         {/* Actual Printable Document Container */}
-        <div className={`w-full max-w-4xl mx-auto px-6 py-6 bg-white text-black leading-relaxed ${showPrintView ? 'shadow-2xl rounded-sm border border-gray-300 print:shadow-none print:border-none print:rounded-none' : ''}`}>
+        <div className={`printable-content w-full max-w-4xl mx-auto px-6 py-6 bg-white min-h-[95vh] text-black leading-relaxed ${showPrintView ? 'shadow-2xl rounded-sm border border-gray-300 print:shadow-none print:border-none print:rounded-none' : ''}`}>
           <style>{`
             @media print {
               @page { size: auto; margin: 15mm 10mm; }
-              body { -webkit-print-color-adjust: exact; }
+              body { background-color: #ffffff !important; -webkit-print-color-adjust: exact; }
+              .printable-content { background-color: #ffffff !important; min-height: 100vh; }
             }
           `}</style>
           <div className="text-center border-b-2 border-gray-800 pb-1.5 mb-2.5">
@@ -943,7 +944,10 @@ export default function App() {
               <h1 className="font-display font-bold text-lg text-white tracking-tight flex items-center gap-1.5">
                 PhD Work-Log Planner <span className="text-xs bg-blue-500/10 text-blue-400 font-normal px-2.5 py-0.5 rounded-full border border-blue-600/20">JRF Scholar Edition</span>
               </h1>
-              <p className="text-xs text-gray-400 font-mono">Saurashtra University, Rajkot</p>
+              <p className="text-xs text-gray-400 font-mono flex items-center gap-3">
+                <span>Saurashtra University, Rajkot</span>
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider bg-blue-500/10 px-2 py-0.5 rounded">By Harwin Popat</span>
+              </p>
             </div>
           </div>
 
