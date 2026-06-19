@@ -127,8 +127,8 @@ export default function App() {
   // --- Smart Book Reading Planner States ---
   const [isReadingPlanner, setIsReadingPlanner] = useState<boolean>(false);
   const [plannerBookTitle, setPlannerBookTitle] = useState<string>("");
-  const [plannerStartPage, setPlannerStartPage] = useState<number>(1);
-  const [plannerEndPage, setPlannerEndPage] = useState<number>(150);
+  const [plannerStartPage, setPlannerStartPage] = useState<string>("1");
+  const [plannerEndPage, setPlannerEndPage] = useState<string>("150");
   const [plannerExcludePages, setPlannerExcludePages] = useState<string>("");
   const [plannerRandomize, setPlannerRandomize] = useState<boolean>(true);
   const [plannerDescriptionStyle, setPlannerDescriptionStyle] = useState<string>("standard");
@@ -136,7 +136,7 @@ export default function App() {
   const [plannerPreviewPlan, setPlannerPreviewPlan] = useState<any[] | null>(null);
   
   // Multi-book queue
-  const [plannerBookQueue, setPlannerBookQueue] = useState<Array<{title: string; startPage: number; endPage: number}>>([]);
+  const [plannerBookQueue, setPlannerBookQueue] = useState<Array<{title: string; startPage: string; endPage: string}>>([]);
   
   // Bulk Selection State
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
@@ -652,57 +652,253 @@ export default function App() {
   };
 
   // --- Smart Reading Planner Helpers & Handlers ---
-  const parseExclusions = (excludeStr: string): Set<number> => {
-    const excluded = new Set<number>();
+  const isRoman = (str: string): boolean => {
+    return /^[ivxlcdmIVXLCDM]+$/.test(str.trim());
+  };
+
+  const romanToArabic = (roman: string): number => {
+    const r = roman.toUpperCase();
+    const map: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+    let total = 0;
+    for (let i = 0; i < r.length; i++) {
+      const current = map[r[i]] || 0;
+      const next = map[r[i + 1]] || 0;
+      if (current < next) {
+        total += next - current;
+        i++;
+      } else {
+        total += current;
+      }
+    }
+    return total;
+  };
+
+  const arabicToRoman = (num: number, lowercase = true): string => {
+    const list = [
+      { value: 1000, char: 'M' },
+      { value: 900, char: 'CM' },
+      { value: 500, char: 'D' },
+      { value: 400, char: 'CD' },
+      { value: 100, char: 'C' },
+      { value: 90, char: 'XC' },
+      { value: 50, char: 'L' },
+      { value: 40, char: 'XL' },
+      { value: 10, char: 'X' },
+      { value: 9, char: 'IX' },
+      { value: 5, char: 'V' },
+      { value: 4, char: 'IV' },
+      { value: 1, char: 'I' }
+    ];
+    let result = '';
+    let curr = num;
+    for (const item of list) {
+      while (curr >= item.value) {
+        result += item.char;
+        curr -= item.value;
+      }
+    }
+    return lowercase ? result.toLowerCase() : result;
+  };
+
+  const generatePageRange = (startStr: string, endStr: string): string[] => {
+    const cleanStart = startStr.trim();
+    const cleanEnd = endStr.trim();
+
+    // 1. Try numeric range: e.g., "1" to "150"
+    const startNum = parseInt(cleanStart, 10);
+    const endNum = parseInt(cleanEnd, 10);
+    if (!isNaN(startNum) && !isNaN(endNum)) {
+      if (startNum <= endNum) {
+        const pages: string[] = [];
+        for (let p = startNum; p <= endNum; p++) {
+          pages.push(String(p));
+        }
+        return pages;
+      }
+    }
+
+    // 2. Try Roman numeral range: e.g., "xiii" to "xvi"
+    if (isRoman(cleanStart) && isRoman(cleanEnd)) {
+      const sVal = romanToArabic(cleanStart);
+      const eVal = romanToArabic(cleanEnd);
+      const isLC = cleanStart === cleanStart.toLowerCase();
+      if (sVal <= eVal) {
+        const pages: string[] = [];
+        for (let v = sVal; v <= eVal; v++) {
+          pages.push(arabicToRoman(v, isLC));
+        }
+        return pages;
+      }
+    }
+
+    // 3. Try format like "preface xiii" or "xiii of preface"
+    const wordsStart = cleanStart.split(/\s+/);
+    const wordsEnd = cleanEnd.split(/\s+/);
+    if (wordsStart.length === wordsEnd.length) {
+      const diffIdx = [];
+      for (let i = 0; i < wordsStart.length; i++) {
+        if (wordsStart[i] !== wordsEnd[i]) {
+          diffIdx.push(i);
+        }
+      }
+      if (diffIdx.length === 1) {
+        const idx = diffIdx[0];
+        const tokenS = wordsStart[idx];
+        const tokenE = wordsEnd[idx];
+
+        const nS = parseInt(tokenS, 10);
+        const nE = parseInt(tokenE, 10);
+        if (!isNaN(nS) && !isNaN(nE) && nS <= nE) {
+          const pages: string[] = [];
+          for (let p = nS; p <= nE; p++) {
+            const arr = [...wordsStart];
+            arr[idx] = String(p);
+            pages.push(arr.join(" "));
+          }
+          return pages;
+        }
+
+        if (isRoman(tokenS) && isRoman(tokenE)) {
+          const sVal = romanToArabic(tokenS);
+          const eVal = romanToArabic(tokenE);
+          const isLC = tokenS === tokenS.toLowerCase();
+          if (sVal <= eVal) {
+            const pages: string[] = [];
+            for (let v = sVal; v <= eVal; v++) {
+              const arr = [...wordsStart];
+              arr[idx] = arabicToRoman(v, isLC);
+              pages.push(arr.join(" "));
+            }
+            return pages;
+          }
+        }
+      }
+    }
+
+    if (cleanStart === cleanEnd) return [cleanStart];
+    return [cleanStart, cleanEnd];
+  };
+
+  const parseExclusions = (excludeStr: string): Set<string> => {
+    const excluded = new Set<string>();
     if (!excludeStr.trim()) return excluded;
     
     const parts = excludeStr.split(',');
     for (let part of parts) {
-      part = part.trim();
+      part = part.trim().toLowerCase();
       if (part.includes('-')) {
         const [startStr, endStr] = part.split('-');
-        const start = parseInt(startStr, 10);
-        const end = parseInt(endStr, 10);
-        if (!isNaN(start) && !isNaN(end)) {
-          const first = Math.min(start, end);
-          const last = Math.max(start, end);
+        const startClean = startStr.trim();
+        const endClean = endStr.trim();
+        const startNum = parseInt(startClean, 10);
+        const endNum = parseInt(endClean, 10);
+        
+        if (!isNaN(startNum) && !isNaN(endNum)) {
+          const first = Math.min(startNum, endNum);
+          const last = Math.max(startNum, endNum);
           for (let i = first; i <= last; i++) {
-            excluded.add(i);
+            excluded.add(String(i));
+          }
+        } else if (isRoman(startClean) && isRoman(endClean)) {
+          const sVal = romanToArabic(startClean);
+          const eVal = romanToArabic(endClean);
+          const first = Math.min(sVal, eVal);
+          const last = Math.max(sVal, eVal);
+          for (let i = first; i <= last; i++) {
+            excluded.add(arabicToRoman(i, true));
+            excluded.add(arabicToRoman(i, false).toUpperCase());
           }
         }
       } else {
-        const val = parseInt(part, 10);
-        if (!isNaN(val)) {
-          excluded.add(val);
-        }
+        excluded.add(part);
       }
     }
     return excluded;
   };
 
-  const formatPageRanges = (pages: number[]): string => {
+  const formatPageRanges = (pages: string[]): string => {
     if (pages.length === 0) return "None";
-    const ranges: string[] = [];
-    let start = pages[0];
-    let prev = pages[0];
     
-    for (let i = 1; i <= pages.length; i++) {
-      const current = pages[i];
-      if (current === prev + 1) {
-        prev = current;
-      } else {
-        if (start === prev) {
-          ranges.push(`${start}`);
-        } else {
-          ranges.push(`${start}-${prev}`);
-        }
-        if (i < pages.length) {
-          start = current;
-          prev = current;
+    const ranges: string[] = [];
+    let startIdx = 0;
+    
+    const isConsecutive = (val1: string, val2: string): boolean => {
+      const n1 = parseInt(val1, 10);
+      const n2 = parseInt(val2, 10);
+      if (!isNaN(n1) && !isNaN(n2)) {
+        return n2 === n1 + 1;
+      }
+      
+      if (isRoman(val1) && isRoman(val2)) {
+        const isLC1 = val1 === val1.toLowerCase();
+        const isLC2 = val2 === val2.toLowerCase();
+        if (isLC1 === isLC2) {
+          const r1 = romanToArabic(val1);
+          const r2 = romanToArabic(val2);
+          return r2 === r1 + 1;
         }
       }
+      
+      const w1 = val1.split(/\s+/);
+      const w2 = val2.split(/\s+/);
+      if (w1.length === w2.length && w1.length > 1) {
+        let diffIdx = -1;
+        for (let i = 0; i < w1.length; i++) {
+          if (w1[i] !== w2[i]) {
+            if (diffIdx === -1) {
+              diffIdx = i;
+            } else {
+              return false;
+            }
+          }
+        }
+        if (diffIdx !== -1) {
+          return isConsecutive(w1[diffIdx], w2[diffIdx]);
+        }
+      }
+      
+      return false;
+    };
+    
+    const formatRange = (first: string, last: string): string => {
+      if (first === last) return first;
+      
+      const w1 = first.split(/\s+/);
+      const w2 = last.split(/\s+/);
+      if (w1.length === w2.length && w1.length > 1) {
+        let diffIdx = -1;
+        for (let i = 0; i < w1.length; i++) {
+          if (w1[i] !== w2[i]) {
+            if (diffIdx === -1) {
+              diffIdx = i;
+            } else {
+              diffIdx = -2;
+              break;
+            }
+          }
+        }
+        if (diffIdx >= 0) {
+          const t1 = w1[diffIdx];
+          const t2 = w2[diffIdx];
+          const copy = [...w1];
+          copy[diffIdx] = `${t1}–${t2}`;
+          return copy.join(" ");
+        }
+      }
+      
+      return `${first}–${last}`;
+    };
+
+    while (startIdx < pages.length) {
+      let endIdx = startIdx;
+      while (endIdx + 1 < pages.length && isConsecutive(pages[endIdx], pages[endIdx + 1])) {
+        endIdx++;
+      }
+      ranges.push(formatRange(pages[startIdx], pages[endIdx]));
+      startIdx = endIdx + 1;
     }
-    return `pp. ${ranges.join(', ')}`;
+    
+    return `Pp. ${ranges.join(', ')}`;
   };
 
   const generatePlannerDescription = (book: string, rangesText: string, style: string, isSlot2: boolean): string => {
@@ -758,19 +954,28 @@ export default function App() {
     }
 
     // Merge all pages from all books into a single pool with book metadata
-    const allPagesWithBook: Array<{page: number; book: string}> = [];
+    const allPagesWithBook: Array<{pageLabel: string; book: string; pageIndex: number}> = [];
+    let globalIndex = 0;
     for (const book of effectiveBooks) {
-      if (book.startPage <= 0 || book.endPage <= 0) continue;
-      if (book.endPage < book.startPage) continue;
-      for (let p = book.startPage; p <= book.endPage; p++) {
-        allPagesWithBook.push({ page: p, book: book.title });
+      const generated = generatePageRange(String(book.startPage), String(book.endPage));
+      for (const pLabel of generated) {
+        allPagesWithBook.push({ pageLabel: pLabel, book: book.title, pageIndex: globalIndex++ });
       }
     }
     
     const excluded = parseExclusions(plannerExcludePages);
-    const validPagesWithBook = allPagesWithBook.filter(p => !excluded.has(p.page));
+    const validPagesWithBook = allPagesWithBook.filter(p => {
+      const labelLower = p.pageLabel.toLowerCase();
+      if (excluded.has(labelLower)) return false;
+      const words = labelLower.split(/\s+/);
+      for (const w of words) {
+        if (excluded.has(w)) return false;
+      }
+      return true;
+    });
+    
     const N = validPagesWithBook.length;
-    const validPages = validPagesWithBook.map(p => p.page);
+    const validPages = validPagesWithBook.map(p => p.pageLabel);
     
     if (N === 0) {
       triggerAlert("Calculation Error", "No pages to read! Exclusions filtered out your entire page range.");
@@ -837,7 +1042,7 @@ export default function App() {
     } else {
       // Randomized pages per slot distribution (partition pages directly into all active slots)
       const totalSlots = daysCount * 2;
-      const slotsChunks: number[][] = Array.from({ length: totalSlots }, () => []);
+      const slotsChunks: string[][] = Array.from({ length: totalSlots }, () => []);
       
       if (N <= totalSlots) {
         // Under-filled: 1 page per slot for the first N slots, others remain literature research
@@ -870,10 +1075,10 @@ export default function App() {
 
         // Determine book for each slot (multi-book aware)
         const s1BookTitle = s1Pages.length > 0
-          ? (validPagesWithBook.find(p => p.page === s1Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
+          ? (validPagesWithBook.find(p => p.pageLabel === s1Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
           : effectiveBooks[0]?.title || 'assigned text';
         const s2BookTitle = s2Pages.length > 0
-          ? (validPagesWithBook.find(p => p.page === s2Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
+          ? (validPagesWithBook.find(p => p.pageLabel === s2Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
           : effectiveBooks[0]?.title || 'assigned text';
 
         previewItems.push({
@@ -2917,14 +3122,14 @@ export default function App() {
                               🏁 Start Page:
                             </label>
                             <input 
-                              type="number"
-                              min={1}
+                              type="text"
                               value={plannerStartPage}
                               onChange={(e) => {
-                                setPlannerStartPage(Math.max(1, Number(e.target.value)));
+                                setPlannerStartPage(e.target.value);
                                 setPlannerPreviewPlan(null);
                               }}
-                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                              placeholder="e.g. 1 or xiii"
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-650"
                             />
                           </div>
 
@@ -2933,21 +3138,21 @@ export default function App() {
                               🏁 End Page:
                             </label>
                             <input 
-                              type="number"
-                              min={1}
+                              type="text"
                               value={plannerEndPage}
                               onChange={(e) => {
-                                setPlannerEndPage(Math.max(1, Number(e.target.value)));
+                                setPlannerEndPage(e.target.value);
                                 setPlannerPreviewPlan(null);
                               }}
-                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                              placeholder="e.g. 150 or xvi"
+                              className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-650"
                             />
                           </div>
                         </div>
 
                         {/* Multi-book queue */}
                         <div className="space-y-2">
-                          <div className="flex items-center justify-between">
+                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">📚 Book Queue ({plannerBookQueue.length} books):</span>
                             <button
                               type="button"
@@ -2955,8 +3160,8 @@ export default function App() {
                                 if (!plannerBookTitle.trim()) return;
                                 setPlannerBookQueue(prev => [...prev, { title: plannerBookTitle, startPage: plannerStartPage, endPage: plannerEndPage }]);
                                 setPlannerBookTitle("");
-                                setPlannerStartPage(1);
-                                setPlannerEndPage(150);
+                                setPlannerStartPage("1");
+                                setPlannerEndPage("150");
                                 setPlannerPreviewPlan(null);
                               }}
                               className="text-[10px] bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 px-2.5 py-1 rounded-md font-semibold transition-colors flex items-center gap-1"
