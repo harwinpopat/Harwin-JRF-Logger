@@ -105,6 +105,7 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth());
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [attendanceScope, setAttendanceScope] = useState<'today' | 'full'>('today');
   const [editingScholar, setEditingScholar] = useState<boolean>(false);
   const [csvInput, setCsvInput] = useState<string>('');
   const [showCsvBox, setShowCsvBox] = useState<boolean>(false);
@@ -314,13 +315,31 @@ export default function App() {
           const cloudHolidays = await loadHolidaysFromCloud(currentUser.uid);
           const cloudEntries = await loadEntriesFromCloud(currentUser.uid);
           
-          if (cloudScholar || (cloudEntries && cloudEntries.length > 0) || cloudHolidays) {
-            // Found existing cloud backup, overwrite the local state
-            if (cloudScholar) setScholar(cloudScholar);
-            if (cloudHolidays) setHolidays(cloudHolidays);
-            if (cloudEntries) setEntries(cloudEntries);
+          // Intelligent Sync Check to prevent data wiping & jumpscare
+          const cloudHasData = !!(cloudScholar || (cloudEntries && cloudEntries.length > 0) || (cloudHolidays && cloudHolidays.length > 0));
+          
+          if (cloudHasData) {
+            // Found existing cloud backup, load into memory where available.
+            // If some collections are empty in cloud but populated in local state, we safely back up the local values.
+            if (cloudScholar) {
+              setScholar(cloudScholar);
+            } else {
+              await saveScholarToCloud(currentUser.uid, scholar);
+            }
+            
+            if (cloudHolidays && cloudHolidays.length > 0) {
+              setHolidays(cloudHolidays);
+            } else if (holidays && holidays.length > 0) {
+              await saveHolidaysToCloud(currentUser.uid, holidays);
+            }
+            
+            if (cloudEntries && cloudEntries.length > 0) {
+              setEntries(cloudEntries);
+            } else if (entries && entries.length > 0) {
+              await saveEntriesToCloud(currentUser.uid, entries);
+            }
           } else {
-            // First time auth: Back up local state to the cloud
+            // First time auth or empty cloud database: Back up local state to the cloud so we don't start with 0 entries
             await saveScholarToCloud(currentUser.uid, scholar);
             await saveHolidaysToCloud(currentUser.uid, holidays);
             await saveEntriesToCloud(currentUser.uid, entries);
@@ -1105,19 +1124,110 @@ export default function App() {
 
   // --- Attendance Summary Stats ---
   const attendanceSummary = useMemo(() => {
+    const today = new Date();
+    const todayYear = today.getFullYear();
+    const todayMonth = today.getMonth();
+    const todayDay = today.getDate();
+    
+    const isCurrentMonth = selectedYear === todayYear && selectedMonth === todayMonth;
+    const endDayLimit = isCurrentMonth ? todayDay : monthInfo.daysInMonth;
+
     const monthPrefix = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
     const monthEntries = entries.filter(e => e.date.startsWith(monthPrefix));
-    
-    const uniqueDaysWorked = new Set(monthEntries.filter(e => e.activityType !== 'Leave').map(e => e.date)).size;
-    const leaveDays = new Set(monthEntries.filter(e => e.activityType === 'Leave').map(e => e.date)).size;
-    const totalWorkingDays = monthInfo.totalWorkingDays;
-    const attendancePercent = totalWorkingDays > 0 ? Math.round((uniqueDaysWorked / totalWorkingDays) * 100) : 0;
+
+    // Group entries by date for easy lookup
+    const entriesByDate: Record<string, LogEntry[]> = {};
+    monthEntries.forEach(e => {
+      if (!entriesByDate[e.date]) {
+        entriesByDate[e.date] = [];
+      }
+      entriesByDate[e.date].push(e);
+    });
+
+    // We will calculate statistics for:
+    // 1. "Full Month"
+    // 2. "Up to Today"
+    let leavesFull = 0;
+    let worksFull = 0;
+    let leavesToday = 0;
+    let worksToday = 0;
+
+    // Loop through all dates to calculate fractions
+    for (let day = 1; day <= monthInfo.daysInMonth; day++) {
+      const dateStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayEntries = entriesByDate[dateStr] || [];
+      
+      const leaves = dayEntries.filter(e => e.activityType === 'Leave').length;
+      const works = dayEntries.filter(e => e.activityType && e.activityType !== 'Leave').length;
+      const unfilled = dayEntries.filter(e => !e.activityType).length;
+      const total = leaves + works + unfilled;
+
+      let leaveFraction = 0;
+      let workFraction = 0;
+
+      if (total > 0) {
+        const denom = Math.max(2, total);
+        leaveFraction = leaves / denom;
+        workFraction = works / denom;
+      }
+
+      leavesFull += leaveFraction;
+      worksFull += workFraction;
+
+      if (day <= endDayLimit) {
+        leavesToday += leaveFraction;
+        worksToday += workFraction;
+      }
+    }
+
+    // Now let's calculate actual working dates based on config exclusions
+    let workingDaysFull = 0;
+    let workingDaysToday = 0;
+
+    for (let day = 1; day <= monthInfo.daysInMonth; day++) {
+      const curDate = new Date(selectedYear, selectedMonth, day);
+      const status = getDayStatus(curDate, holidays, true, true);
+      
+      if (status.isWorkingDay) {
+        workingDaysFull++;
+        if (day <= endDayLimit) {
+          workingDaysToday++;
+        }
+      }
+    }
+
+    const attendancePercentFull = workingDaysFull > 0 
+      ? Math.round((worksFull / workingDaysFull) * 100) 
+      : 0;
+      
+    const attendancePercentToday = workingDaysToday > 0 
+      ? Math.round((worksToday / workingDaysToday) * 100) 
+      : 0;
+
     const readingHours = monthEntries.filter(e => e.activityType === 'Reading').length * 2;
     const mentoringHours = monthEntries.filter(e => e.activityType === 'Mentoring').length * 2;
-    const deptHours = monthEntries.filter(e => e.activityType === 'Department Work').length * 2;
+    const deptHours = monthEntries.filter(e => e.activityType && e.activityType !== 'Reading' && e.activityType !== 'Leave').length * 2;
 
-    return { uniqueDaysWorked, leaveDays, totalWorkingDays, attendancePercent, readingHours, mentoringHours, deptHours };
-  }, [entries, selectedYear, selectedMonth, monthInfo]);
+    return {
+      full: {
+        uniqueDaysWorked: parseFloat(worksFull.toFixed(2)),
+        leaveDays: parseFloat(leavesFull.toFixed(2)),
+        totalWorkingDays: workingDaysFull,
+        attendancePercent: Math.min(100, attendancePercentFull),
+      },
+      today: {
+        uniqueDaysWorked: parseFloat(worksToday.toFixed(2)),
+        leaveDays: parseFloat(leavesToday.toFixed(2)),
+        totalWorkingDays: workingDaysToday,
+        attendancePercent: Math.min(100, attendancePercentToday),
+        elapsedCalendarDays: isCurrentMonth ? todayDay : monthInfo.daysInMonth,
+      },
+      readingHours,
+      mentoringHours,
+      deptHours,
+      isCurrentMonth
+    };
+  }, [entries, selectedYear, selectedMonth, monthInfo, holidays]);
 
   // --- Entry Templates ---
   const handleSaveTemplate = (name: string) => {
@@ -1480,8 +1590,19 @@ export default function App() {
               <CalendarDays className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="font-display font-bold text-lg text-white tracking-tight flex items-center gap-1.5">
+              <h1 className="font-display font-bold text-lg text-white tracking-tight flex flex-wrap items-center gap-1.5">
                 PhD Work-Log Planner <span className="text-xs bg-blue-500/10 text-blue-400 font-normal px-2.5 py-0.5 rounded-full border border-blue-600/20">JRF Scholar Edition</span>
+                {user ? (
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono font-semibold px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1" title={`Logged in as ${user.email}`}>
+                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                    Cloud Mode
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-amber-500/10 text-amber-400 font-mono font-semibold px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1" title="Offline-first mode (changes saved to local device)">
+                    <span className="w-1.5 h-1.5 bg-amber-400 rounded-full" />
+                    Local Mode
+                  </span>
+                )}
               </h1>
               <p className="text-xs text-gray-400 font-mono flex items-center gap-3">
                 <span>Saurashtra University, Rajkot</span>
@@ -1631,29 +1752,47 @@ export default function App() {
           {/* --- Collapsible Workspace Setup Hub & Cloud Sync Drawer --- */}
           <section id="workspace-setup-hub-container" className="flex flex-col gap-4">
             {/* 1. Header Bar with stats badges */}
-            <div className="bg-[#f1efea] border border-[#2A2D35]/80 rounded-2xl p-3 px-4 md:px-5 flex flex-wrap items-center justify-between gap-4 transition-all duration-200">
+            <div className={`border rounded-2xl p-3 px-4 md:px-5 flex flex-wrap items-center justify-between gap-4 transition-all duration-200 ${
+              theme === 'dark' 
+                ? 'bg-[#1C1F26] border-[#2A2D35]/80' 
+                : 'bg-[#f1efea] border-[#DCDFE6]'
+            }`}>
               <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-300 mr-2">
-                  <Settings className="w-4 h-4 text-gray-400" />
+                <div className={`flex items-center gap-1.5 text-xs font-semibold mr-2 ${
+                  theme === 'dark' ? 'text-gray-300' : 'text-gray-750'
+                }`}>
+                  <Settings className="w-4 h-4 text-gray-450" />
                   <span>Workspace Configuration:</span>
                 </div>
                 
                 {/* Profile setup status */}
-                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
-                  <GraduationCap className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Scholar: <strong className="text-gray-200">{scholar.name || 'Set Profile Name'}</strong></span>
+                <div className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border ${
+                  theme === 'dark' 
+                    ? 'text-gray-400 bg-[#15171C]/50 border-[#2A2D35]' 
+                    : 'text-gray-650 bg-white border-gray-300/80 shadow-sm'
+                }`}>
+                  <GraduationCap className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Scholar: <strong className={theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}>{scholar.name || 'Set Profile Name'}</strong></span>
                 </div>
 
                 {/* Cloud Sync Status info */}
-                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
-                  <Cloud className={`w-3.5 h-3.5 ${user ? 'text-emerald-400' : 'text-gray-500'}`} />
-                  <span>Cloud: <strong className="text-gray-200">{user ? user.email : 'Local Only'}</strong></span>
+                <div className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border ${
+                  theme === 'dark' 
+                    ? 'text-gray-400 bg-[#15171C]/50 border-[#2A2D35]' 
+                    : 'text-gray-650 bg-white border-gray-300/80 shadow-sm'
+                }`}>
+                  <Cloud className={`w-3.5 h-3.5 ${user ? 'text-emerald-500' : 'text-gray-400'}`} />
+                  <span>Cloud: <strong className={theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}>{user ? user.email : 'Local Only'}</strong></span>
                 </div>
 
                 {/* Active Holidays status */}
-                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#1C1F26]/40 px-2.5 py-1 rounded-full border border-[#2A2D35]">
-                  <CalendarIcon className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Muted Holidays: <strong className="text-gray-200">{holidays.length} active</strong></span>
+                <div className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border ${
+                  theme === 'dark' 
+                    ? 'text-gray-400 bg-[#15171C]/50 border-[#2A2D35]' 
+                    : 'text-gray-650 bg-white border-gray-300/80 shadow-sm'
+                }`}>
+                  <CalendarIcon className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Muted Holidays: <strong className={theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}>{holidays.length} active</strong></span>
                 </div>
               </div>
 
@@ -1663,7 +1802,9 @@ export default function App() {
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
                   showAdvancedSetup 
                     ? 'bg-blue-600/10 text-blue-400 border-blue-500/20' 
-                    : 'bg-[#2A2D35] text-gray-300 border-[#343842] hover:bg-[#343842] hover:text-white'
+                    : theme === 'dark'
+                      ? 'bg-[#2A2D35] text-gray-300 border-[#343842] hover:bg-[#343842] hover:text-white'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 shadow-sm'
                 }`}
               >
                 <span>{showAdvancedSetup ? 'Hide Setup Console' : 'Open Setup Console'}</span>
@@ -2218,16 +2359,46 @@ export default function App() {
           <section id="interactive-log-workbench" className="bg-[#15171C] rounded-2xl border border-[#2A2D35] shadow-sm overflow-hidden">
             
             {/* Header, Search & Filter Bar */}
-            <div className="px-6 py-4 bg-[#1C1F26] border-b border-[#2A2D35] flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-blue-500" />
-                <div>
-                  <h2 className="text-sm font-bold tracking-tight text-white uppercase font-display">
-                    Journal Work Logs: {selectedMonthName} {selectedYear}
-                  </h2>
-                  <p className="text-xs text-gray-400">
-                    Showing {currentMonthEntries.length} log intervals
-                  </p>
+            <div className="px-6 py-4 bg-[#1C1F26] border-b border-[#2A2D35] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-5 h-5 text-blue-500" />
+                  <div>
+                    <h2 className="text-sm font-bold tracking-tight text-white uppercase font-display">
+                      Journal Work Logs: {selectedMonthName} {selectedYear}
+                    </h2>
+                    <p className="text-xs text-gray-400">
+                      Showing {currentMonthEntries.length} log intervals
+                    </p>
+                  </div>
+                </div>
+
+                {/* Primary Add Action Buttons - Super visible for ease of use */}
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      setShowEntryBuilder(!showEntryBuilder);
+                      setBuilderDay(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer select-none ${
+                      showEntryBuilder 
+                        ? 'bg-amber-600 hover:bg-amber-700 text-white border border-amber-500/25' 
+                        : 'bg-blue-600 hover:bg-blue-700 text-white border border-blue-500/25'
+                    }`}
+                    title="Toggle JRF Rich Entry Builder Form Wizard"
+                  >
+                    {showEntryBuilder ? <X className="w-3.5 h-3.5 text-white" /> : <Plus className="w-3.5 h-3.5 text-white" />}
+                    <span>{showEntryBuilder ? 'Close Builder' : 'Add New Entries'}</span>
+                  </button>
+
+                  <button 
+                    onClick={handleAddCustomEntry}
+                    className="bg-[#2A2D35] hover:bg-[#343842] border border-[#343842] text-gray-200 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm select-none"
+                    title="Instantly append a new blank row at the top of this month's journal logs"
+                  >
+                    <CopyPlus className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Quick Add Row</span>
+                  </button>
                 </div>
               </div>
 
@@ -2240,7 +2411,7 @@ export default function App() {
                     placeholder="Search logs (e.g. Reading, NIRF)..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full sm:w-64 text-xs pl-9 pr-4 py-2 bg-[#15171C] border border-[#2A2D35] text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium placeholder-gray-500"
+                    className="w-full sm:w-48 text-xs pl-9 pr-4 py-2 bg-[#15171C] border border-[#2A2D35] text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium placeholder-gray-500"
                   />
                 </div>
                 <button 
@@ -2285,18 +2456,6 @@ export default function App() {
                 <span className={`flex items-center gap-1 text-[10px] font-semibold ${isOnline ? 'text-emerald-400' : 'text-red-400'}`} title={isOnline ? 'Online' : 'Offline — changes saved locally'}>
                   {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                 </span>
-                <button 
-                  onClick={() => {
-                    setShowEntryBuilder(!showEntryBuilder);
-                    setBuilderDay(1);
-                  }}
-                  className={`text-white p-2 rounded-lg text-xs font-semibold flex items-center justify-center transition-all shrink-0 ${
-                    showEntryBuilder ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                  title="Toggle JRF Rich Entry Builder Form"
-                >
-                  {showEntryBuilder ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4 text-white" />}
-                </button>
               </div>
             </div>
 
@@ -3232,35 +3391,87 @@ export default function App() {
           </section>
 
           {/* --- Attendance Summary Card --- */}
-          <section className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-1.5 font-display mb-4">
-              <CalendarDays className="w-4 h-4 text-blue-500" />
-              <span>Attendance Summary — {selectedMonthName} {selectedYear}</span>
-            </h4>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
-                <div className="text-2xl font-bold text-blue-400">{attendanceSummary.uniqueDaysWorked}</div>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Days Attended</div>
-              </div>
-              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
-                <div className="text-2xl font-bold text-rose-400">{attendanceSummary.leaveDays}</div>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Leave Days</div>
-              </div>
-              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
-                <div className={`text-2xl font-bold ${attendanceSummary.attendancePercent >= 75 ? 'text-emerald-400' : 'text-amber-400'}`}>{attendanceSummary.attendancePercent}%</div>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Attendance</div>
-              </div>
-              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
-                <div className="text-2xl font-bold text-purple-400">{attendanceSummary.readingHours}</div>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Reading Hrs</div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-4 mt-3 text-[11px] text-gray-400">
-              <span>Mentoring: <strong className="text-white">{attendanceSummary.mentoringHours} hrs</strong></span>
-              <span>Dept Work: <strong className="text-white">{attendanceSummary.deptHours} hrs</strong></span>
-              <span>Total Working Days: <strong className="text-white">{attendanceSummary.totalWorkingDays}</strong></span>
-            </div>
-          </section>
+          {(() => {
+            const isTodayScope = attendanceSummary.isCurrentMonth && attendanceScope === 'today';
+            const stats = isTodayScope ? attendanceSummary.today : attendanceSummary.full;
+            
+            return (
+              <section className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-1.5 font-display">
+                    <CalendarDays className="w-4 h-4 text-blue-500" />
+                    <span>Attendance Summary — {selectedMonthName} {selectedYear}</span>
+                  </h4>
+                  
+                  {/* Scope Selector (Only visible for the current calendar month) */}
+                  {attendanceSummary.isCurrentMonth && (
+                    <div className="flex bg-[#1C1F26] p-1 rounded-lg border border-[#2A2D35] text-[11px] font-semibold text-gray-400">
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceScope('today')}
+                        className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                          attendanceScope === 'today'
+                            ? 'bg-blue-600 text-white shadow-sm font-bold'
+                            : 'hover:text-gray-200'
+                        }`}
+                      >
+                        Up to Today ({selectedMonthName.substring(0, 3)} {stats.elapsedCalendarDays})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceScope('full')}
+                        className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                          attendanceScope === 'full'
+                            ? 'bg-blue-600 text-white shadow-sm font-bold'
+                            : 'hover:text-gray-200'
+                        }`}
+                      >
+                        Full Month View
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                    <div className="text-2xl font-bold text-blue-400">{stats.uniqueDaysWorked}</div>
+                    <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Days Attended</div>
+                  </div>
+                  <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                    <div className="text-2xl font-bold text-rose-400">{stats.leaveDays}</div>
+                    <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Leave Days</div>
+                  </div>
+                  <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                    <div className={`text-2xl font-bold ${stats.attendancePercent >= 75 ? 'text-emerald-400' : 'text-amber-400'}`}>{stats.attendancePercent}%</div>
+                    <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Attendance</div>
+                  </div>
+                  <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                    <div className="text-2xl font-bold text-purple-400">{attendanceSummary.readingHours}</div>
+                    <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Reading Hrs</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-[#2A2D35]/50 pt-3 text-[11px] text-gray-400 gap-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span>Mentoring: <strong className="text-white font-semibold">{attendanceSummary.mentoringHours} hrs</strong></span>
+                    <span>Dept Work: <strong className="text-white font-semibold">{attendanceSummary.deptHours} hrs</strong></span>
+                    <span>Total Working Days: <strong className="text-white font-semibold">{stats.totalWorkingDays}</strong></span>
+                  </div>
+                  {isTodayScope && (
+                    <span className="text-blue-405 font-mono text-[10px] bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                      Showing progress up to today ({selectedMonthName} {stats.elapsedCalendarDays}, {selectedYear}) — Future days excluded
+                    </span>
+                  )}
+                  {!isTodayScope && attendanceSummary.isCurrentMonth && (
+                    <span className="text-gray-500 font-mono text-[10px]">
+                      Projected for the entire month (unlogged future days count as absent)
+                    </span>
+                  )}
+                </div>
+              </section>
+            );
+          })()}
 
           {/* Quick Informational Guide Cards - Bottom segment */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
