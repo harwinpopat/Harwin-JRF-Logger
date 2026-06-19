@@ -81,6 +81,24 @@ export function parseCSV(text: string): { scholar: Partial<ScholarMetadata>; ent
   return { scholar, entries };
 }
 
+/**
+ * Formats a local Date object into "YYYY-MM-DD" local format.
+ */
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Parses a "YYYY-MM-DD" string into a local Date object.
+ */
+function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export function parseDateRobust(dateStr: string): string {
   if (!dateStr) return "";
   let s = dateStr.trim();
@@ -93,7 +111,7 @@ export function parseDateRobust(dateStr: string): string {
   const t = Date.parse(s);
   if (!isNaN(t)) {
     const d = new Date(t);
-    return d.toISOString().split('T')[0];
+    return formatLocalDate(d);
   }
   
   // 2. Try matching YYYY-MM-DD
@@ -233,7 +251,7 @@ export function unparseCSV(metadata: ScholarMetadata, entries: LogEntry[]): stri
 
   const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
   sorted.forEach(entry => {
-    const d = new Date(entry.date);
+    const d = parseLocalDate(entry.date);
     const dayOfWeek = d.toLocaleDateString('en-US', { weekday: 'long' });
     const monthStr = d.toLocaleDateString('en-US', { month: 'long' });
     const formattedDate = `${dayOfWeek}, ${monthStr} ${String(d.getDate()).padStart(2, '0')}, ${d.getFullYear()}`;

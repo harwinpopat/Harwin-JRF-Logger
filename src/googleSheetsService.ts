@@ -280,7 +280,10 @@ export async function fetchEntriesFromSpreadsheet(
         const parsedTimestamp = Date.parse(dateStr);
         if (!isNaN(parsedTimestamp)) {
           const d = new Date(parsedTimestamp);
-          isoDate = d.toISOString().split('T')[0];
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          isoDate = `${year}-${month}-${day}`;
         }
       } catch (err) {
         console.warn("Date parsing skipped for raw cell:", dateStr);

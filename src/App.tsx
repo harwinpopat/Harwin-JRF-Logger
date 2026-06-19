@@ -53,7 +53,7 @@ import {
 import { ScholarMetadata, LogEntry, Holiday } from './types';
 import { TEMPLATE_SCHOLAR, PRELOADED_LOG_ENTRIES, INITIAL_HOLIDAYS } from './prepopulatedData';
 import { parseCSV, unparseCSV } from './csvHelper';
-import { getDayStatus, generateMonthTemplate, getHolidaysForMonth } from './calendarUtils';
+import { getDayStatus, generateMonthTemplate, getHolidaysForMonth, formatLocalDate, parseLocalDate } from './calendarUtils';
 import { syncToGoogleSheets } from './googleSheetsService';
 import { 
   auth, 
@@ -541,7 +541,7 @@ export default function App() {
         totalEvenSaturdays++;
       }
 
-      const dateStr = curDate.toISOString().split('T')[0];
+      const dateStr = formatLocalDate(curDate);
       const hol = holidays.find(h => h.date === dateStr);
       if (hol) {
         activeHolidays.push(hol);
@@ -1518,7 +1518,7 @@ export default function App() {
           </thead>
           <tbody>
             {currentMonthEntries.map((e, idx) => {
-              const d = new Date(e.date);
+              const d = parseLocalDate(e.date);
               const dayOfWeek = d.toLocaleDateString('en-US', { weekday: 'long' });
               const monthNameStr = d.toLocaleDateString('en-US', { month: 'short' });
               const formattedDateString = `${dayOfWeek}, ${monthNameStr} ${String(d.getDate()).padStart(2, '0')}`;
@@ -3213,7 +3213,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-[#2A2D35] text-xs">
                   {currentMonthEntries.map((e, idx) => {
-                    const d = new Date(e.date);
+                    const d = parseLocalDate(e.date);
                     const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
                     const isSaturday = d.getDay() === 6;
                     const dateFormatted = `${dayName}, ${String(d.getDate()).padStart(2, '0')}`;
