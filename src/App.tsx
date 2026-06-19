@@ -835,48 +835,35 @@ export default function App() {
         });
       }
     } else {
-      // Randomized pages per day distribution
-      const daysChunks: number[][] = Array.from({ length: daysCount }, () => []);
-      if (N <= daysCount) {
+      // Randomized pages per slot distribution (partition pages directly into all active slots)
+      const totalSlots = daysCount * 2;
+      const slotsChunks: number[][] = Array.from({ length: totalSlots }, () => []);
+      
+      if (N <= totalSlots) {
+        // Under-filled: 1 page per slot for the first N slots, others remain literature research
         for (let i = 0; i < N; i++) {
-          daysChunks[i] = [validPages[i]];
+          slotsChunks[i] = [validPages[i]];
         }
       } else {
+        // High-fidelity random cuts: choose totalSlots-1 random partitions from N-1 values
         const availableIndices = Array.from({ length: N - 1 }, (_, i) => i + 1);
-        // Shuffle available indices
         for (let i = availableIndices.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [availableIndices[i], availableIndices[j]] = [availableIndices[j], availableIndices[i]];
         }
-        const cuts = availableIndices.slice(0, daysCount - 1).sort((a, b) => a - b);
+        const cuts = availableIndices.slice(0, totalSlots - 1).sort((a, b) => a - b);
         const bounds = [0, ...cuts, N];
-        for (let i = 0; i < daysCount; i++) {
-          daysChunks[i] = validPages.slice(bounds[i], bounds[i + 1]);
+        for (let i = 0; i < totalSlots; i++) {
+          slotsChunks[i] = validPages.slice(bounds[i], bounds[i + 1]);
         }
       }
 
       for (let dayIdx = 0; dayIdx < daysCount; dayIdx++) {
         const dayNum = sortedDays[dayIdx];
         const dateStr = `${selectedYear}-${monthStr}-${String(dayNum).padStart(2, '0')}`;
-        const dayPages = daysChunks[dayIdx] || [];
-        const M = dayPages.length;
-
-        let s1Pages: number[] = [];
-        let s2Pages: number[] = [];
-
-        if (M === 0) {
-          // No pages assigned to this day — both slots get a general literature review entry
-          s1Pages = [];
-          s2Pages = [];
-        } else if (M === 1) {
-          // Single page — assign to slot 1, slot 2 gets a complementary entry
-          s1Pages = [dayPages[0]];
-          s2Pages = [];
-        } else if (M >= 2) {
-          const cut = Math.floor(Math.random() * (M - 1)) + 1;
-          s1Pages = dayPages.slice(0, cut);
-          s2Pages = dayPages.slice(cut);
-        }
+        
+        const s1Pages = slotsChunks[dayIdx * 2] || [];
+        const s2Pages = slotsChunks[dayIdx * 2 + 1] || [];
 
         const r1Text = formatPageRanges(s1Pages);
         const r2Text = formatPageRanges(s2Pages);
@@ -3108,7 +3095,7 @@ export default function App() {
                               className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 border-none rounded-lg text-xs flex items-center gap-1.5 shadow-md shadow-blue-900/30 transition-all cursor-pointer"
                             >
                               <Check className="w-3.5 h-3.5" />
-                              <span>Confirm & Insert {plannerPreviewPlan.filter(p => p.pages.length > 0).length} Entries Into Logbook</span>
+                              <span>Confirm & Insert {plannerPreviewPlan.length} Entries Into Logbook</span>
                             </button>
                           )}
                         </div>
@@ -3121,7 +3108,7 @@ export default function App() {
                                 <Sparkles className="w-3 h-3 text-yellow-300" /> Calculated Smart Reading Distribution
                               </span>
                               <span className="text-[10px] text-gray-500 font-mono">
-                                Total active entries: {plannerPreviewPlan.filter(p => p.pages.length > 0).length} slots
+                                Total active entries: {plannerPreviewPlan.length} slots
                               </span>
                             </div>
                             <div className="space-y-1.5">
@@ -3132,14 +3119,14 @@ export default function App() {
                                     key={pIdx} 
                                     className={`p-2 rounded-lg border text-[11px] transition-all ${
                                       isEmpty 
-                                        ? 'bg-[#1C1F26]/30 border-dashed border-[#2A2D35]/50 opacity-40'
-                                        : 'bg-emerald-950/10 border-emerald-500/20'
+                                        ? 'bg-blue-950/10 border-blue-500/20 text-blue-300'
+                                        : 'bg-emerald-950/10 border-emerald-500/20 text-emerald-300'
                                     }`}
                                   >
                                     <div className="flex items-center justify-between font-mono font-bold text-gray-300 mb-0.5">
                                       <span>📅 Day {String(pPlan.day).padStart(2, '0')} ({pPlan.slot})</span>
-                                      <span className={`${isEmpty ? 'text-gray-600 text-[10px]' : 'text-emerald-400 bg-emerald-500/10 px-1 rounded text-[10px]'}`}>
-                                        {isEmpty ? 'No assignment' : pPlan.pagesText}
+                                      <span className={`px-1 rounded text-[10px] ${isEmpty ? 'text-blue-400 bg-blue-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                                        {isEmpty ? 'Literature Study' : pPlan.pagesText}
                                       </span>
                                     </div>
                                     <p className="text-gray-400 font-serif italic line-clamp-1">{pPlan.description}</p>
