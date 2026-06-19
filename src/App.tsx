@@ -121,7 +121,7 @@ export default function App() {
   const [plannerEndPage, setPlannerEndPage] = useState<number>(150);
   const [plannerExcludePages, setPlannerExcludePages] = useState<string>("");
   const [plannerRandomize, setPlannerRandomize] = useState<boolean>(true);
-  const [plannerDescriptionStyle, setPlannerDescriptionStyle] = useState<string>("academic");
+  const [plannerDescriptionStyle, setPlannerDescriptionStyle] = useState<string>("standard");
   const [plannerCollisionResolution, setPlannerCollisionResolution] = useState<'skip' | 'overwrite' | 'parallel'>('parallel');
   const [plannerPreviewPlan, setPlannerPreviewPlan] = useState<any[] | null>(null);
   
@@ -582,6 +582,9 @@ export default function App() {
 
   const generatePlannerDescription = (book: string, rangesText: string, style: string, isSlot2: boolean): string => {
     const bookName = book.trim() || 'assigned text';
+    if (style === 'standard') {
+      return bookName;
+    }
     if (rangesText === "None") {
       return `Conducted general literature search and reviews of academic papers related to "${bookName}".`;
     }
@@ -593,9 +596,8 @@ export default function App() {
           return `Drafted thematic analytical summaries and theoretical notes from "${bookName}" (${rangesText}) for chapter integration.`;
         case 'detailed':
           return `Advanced reading and bibliographical indexing of "${bookName}" (${rangesText}) focusing on key arguments.`;
-        case 'standard':
         default:
-          return `Continued reading and studying of "${bookName}" (${rangesText}).`;
+          return bookName;
       }
     } else {
       switch (style) {
@@ -605,9 +607,8 @@ export default function App() {
           return `Close logical mapping, chapter-by-chapter annotation, and methodology study of "${bookName}" (${rangesText}).`;
         case 'detailed':
           return `Initiated structured reading session for research thesis references in "${bookName}" (${rangesText}).`;
-        case 'standard':
         default:
-          return `Read and reviewed chapters of "${bookName}" (${rangesText}).`;
+          return bookName;
       }
     }
   };
@@ -719,12 +720,14 @@ export default function App() {
         let s1Pages: number[] = [];
         let s2Pages: number[] = [];
 
-        if (M === 1) {
-          if (Math.random() < 0.5) {
-            s1Pages = [dayPages[0]];
-          } else {
-            s2Pages = [dayPages[0]];
-          }
+        if (M === 0) {
+          // No pages assigned to this day — both slots get a general literature review entry
+          s1Pages = [];
+          s2Pages = [];
+        } else if (M === 1) {
+          // Single page — assign to slot 1, slot 2 gets a complementary entry
+          s1Pages = [dayPages[0]];
+          s2Pages = [];
         } else if (M >= 2) {
           const cut = Math.floor(Math.random() * (M - 1)) + 1;
           s1Pages = dayPages.slice(0, cut);
@@ -773,11 +776,6 @@ export default function App() {
     const newLogs: LogEntry[] = [];
 
     plannerPreviewPlan.forEach((item) => {
-      // If slot is empty of pages, don't write log line to keep template tidy
-      if (item.pages.length === 0) {
-        return;
-      }
-
       const hasCollision = finalEntries.some(e => e.date === item.dateStr && e.timeSlot === item.slot);
       
       if (hasCollision) {
@@ -2504,10 +2502,10 @@ export default function App() {
                               }}
                               className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                             >
+                              <option value="standard">📖 Simple/Standard Book Reading Log</option>
                               <option value="academic">🎓 Comprehensive Intellectual Lit Synthesis</option>
                               <option value="analytical">📊 Critical Summary & Thematic Notes</option>
                               <option value="detailed">✍️ Reference Reading & Resource Bibliographies</option>
-                              <option value="standard">📖 Simple/Standard Book Reading Log</option>
                             </select>
                           </div>
                         </div>
