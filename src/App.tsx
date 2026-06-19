@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Calendar as CalendarIcon, 
   User, 
@@ -39,7 +39,16 @@ import {
   LogOut,
   UserPlus,
   X,
-  ExternalLink
+  ExternalLink,
+  Undo2,
+  Redo2,
+  Sun,
+  Moon,
+  CopyPlus,
+  Save,
+  FileDown,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { ScholarMetadata, LogEntry, Holiday } from './types';
 import { TEMPLATE_SCHOLAR, PRELOADED_LOG_ENTRIES, INITIAL_HOLIDAYS } from './prepopulatedData';
@@ -125,8 +134,31 @@ export default function App() {
   const [plannerCollisionResolution, setPlannerCollisionResolution] = useState<'skip' | 'overwrite' | 'parallel'>('parallel');
   const [plannerPreviewPlan, setPlannerPreviewPlan] = useState<any[] | null>(null);
   
+  // Multi-book queue
+  const [plannerBookQueue, setPlannerBookQueue] = useState<Array<{title: string; startPage: number; endPage: number}>>([]);
+  
   // Bulk Selection State
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+
+  // --- Undo/Redo History ---
+  const [undoStack, setUndoStack] = useState<LogEntry[][]>([]);
+  const [redoStack, setRedoStack] = useState<LogEntry[][]>([]);
+  const isUndoRedoAction = useRef(false);
+
+  // --- Theme State ---
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('jrf_theme') as 'dark' | 'light') || 'dark';
+  });
+
+  // --- Entry Templates/Presets ---
+  const [savedTemplates, setSavedTemplates] = useState<Array<{id: string; name: string; activityType: string; description: string; remarks: string}>>(() => {
+    const saved = localStorage.getItem('jrf_entry_templates');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showTemplatesPanel, setShowTemplatesPanel] = useState<boolean>(false);
+
+  // --- Offline/PWA Status ---
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
 
   // Default builderDay to today's date if it fits in selected month, otherwise default to 1
   useEffect(() => {
@@ -193,6 +225,80 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('gapi_access_token', googleAccessToken);
   }, [googleAccessToken]);
+
+  // --- Undo/Redo: track entries changes ---
+  useEffect(() => {
+    if (isUndoRedoAction.current) {
+      isUndoRedoAction.current = false;
+      return;
+    }
+    // Push previous state to undo stack (limit 20)
+    setUndoStack(prev => {
+      const newStack = [...prev, entries];
+      return newStack.length > 21 ? newStack.slice(-21) : newStack;
+    });
+    setRedoStack([]);
+  }, [entries]);
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length < 2) return; // need at least previous + current
+    const newUndo = [...undoStack];
+    const current = newUndo.pop()!;
+    const previous = newUndo[newUndo.length - 1];
+    setRedoStack(prev => [...prev, current]);
+    setUndoStack(newUndo);
+    isUndoRedoAction.current = true;
+    setEntries(previous);
+  }, [undoStack]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const newRedo = [...redoStack];
+    const next = newRedo.pop()!;
+    setRedoStack(newRedo);
+    setUndoStack(prev => [...prev, next]);
+    isUndoRedoAction.current = true;
+    setEntries(next);
+  }, [redoStack]);
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleUndo, handleRedo]);
+
+  // --- Theme Persistence ---
+  useEffect(() => {
+    localStorage.setItem('jrf_theme', theme);
+    document.documentElement.classList.toggle('light-theme', theme === 'light');
+  }, [theme]);
+
+  // --- Templates Persistence ---
+  useEffect(() => {
+    localStorage.setItem('jrf_entry_templates', JSON.stringify(savedTemplates));
+  }, [savedTemplates]);
+
+  // --- Online/Offline listener ---
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   // --- Firebase Cloud Sync Realtime Engine ---
   useEffect(() => {
@@ -620,26 +726,32 @@ export default function App() {
       triggerAlert("Selection Error", "Please select targeted calendar days from the multi-day grid first!");
       return;
     }
-    if (!plannerBookTitle.trim()) {
-      triggerAlert("Validation Notice", "Please enter the book/resource title first!");
-      return;
+    
+    // Build effective book list: queue + current input (if filled)
+    const effectiveBooks = [...plannerBookQueue];
+    if (plannerBookTitle.trim()) {
+      effectiveBooks.push({ title: plannerBookTitle, startPage: plannerStartPage, endPage: plannerEndPage });
     }
-    if (plannerStartPage <= 0 || plannerEndPage <= 0) {
-      triggerAlert("Value Error", "Page numbers must be positive integers!");
-      return;
-    }
-    if (plannerEndPage < plannerStartPage) {
-      triggerAlert("Value Error", "End Page cannot be less than Start Page!");
+    
+    if (effectiveBooks.length === 0) {
+      triggerAlert("Validation Notice", "Please enter a book/resource title or add books to the queue!");
       return;
     }
 
-    const allPages: number[] = [];
-    for (let p = plannerStartPage; p <= plannerEndPage; p++) {
-      allPages.push(p);
+    // Merge all pages from all books into a single pool with book metadata
+    const allPagesWithBook: Array<{page: number; book: string}> = [];
+    for (const book of effectiveBooks) {
+      if (book.startPage <= 0 || book.endPage <= 0) continue;
+      if (book.endPage < book.startPage) continue;
+      for (let p = book.startPage; p <= book.endPage; p++) {
+        allPagesWithBook.push({ page: p, book: book.title });
+      }
     }
+    
     const excluded = parseExclusions(plannerExcludePages);
-    const validPages = allPages.filter(p => !excluded.has(p));
-    const N = validPages.length;
+    const validPagesWithBook = allPagesWithBook.filter(p => !excluded.has(p.page));
+    const N = validPagesWithBook.length;
+    const validPages = validPagesWithBook.map(p => p.page);
     
     if (N === 0) {
       triggerAlert("Calculation Error", "No pages to read! Exclusions filtered out your entire page range.");
@@ -648,6 +760,17 @@ export default function App() {
 
     const monthStr = String(selectedMonth + 1).padStart(2, '0');
     const previewItems: any[] = [];
+
+    // Helper: get dominant book title for a slice of pages
+    const getBookForSlice = (startIdx: number, count: number): string => {
+      if (count === 0 || effectiveBooks.length <= 1) return effectiveBooks[0]?.title || 'assigned text';
+      const slice = validPagesWithBook.slice(startIdx, startIdx + count);
+      const bookCounts: Record<string, number> = {};
+      for (const p of slice) {
+        bookCounts[p.book] = (bookCounts[p.book] || 0) + 1;
+      }
+      return Object.entries(bookCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || effectiveBooks[0].title;
+    };
 
     if (!plannerRandomize) {
       // Even distribution over 2 * daysCount slots
@@ -660,11 +783,13 @@ export default function App() {
         // Slot 1
         const size1 = Math.floor(N / totalSlots) + ((dayIdx * 2) < (N % totalSlots) ? 1 : 0);
         const s1Pages = validPages.slice(curr, curr + size1);
+        const s1Book = getBookForSlice(curr, size1);
         curr += size1;
         
         // Slot 2
         const size2 = Math.floor(N / totalSlots) + ((dayIdx * 2 + 1) < (N % totalSlots) ? 1 : 0);
         const s2Pages = validPages.slice(curr, curr + size2);
+        const s2Book = getBookForSlice(curr, size2);
         curr += size2;
 
         const r1Text = formatPageRanges(s1Pages);
@@ -676,7 +801,7 @@ export default function App() {
           slot: slot1Hours,
           pages: s1Pages,
           pagesText: r1Text,
-          description: generatePlannerDescription(plannerBookTitle, r1Text, plannerDescriptionStyle, false),
+          description: generatePlannerDescription(s1Book, r1Text, plannerDescriptionStyle, false),
           remarks: s1Pages.length > 0 ? r1Text : "-"
         });
 
@@ -686,7 +811,7 @@ export default function App() {
           slot: slot2Hours,
           pages: s2Pages,
           pagesText: r2Text,
-          description: generatePlannerDescription(plannerBookTitle, r2Text, plannerDescriptionStyle, true),
+          description: generatePlannerDescription(s2Book, r2Text, plannerDescriptionStyle, true),
           remarks: s2Pages.length > 0 ? r2Text : "-"
         });
       }
@@ -737,13 +862,21 @@ export default function App() {
         const r1Text = formatPageRanges(s1Pages);
         const r2Text = formatPageRanges(s2Pages);
 
+        // Determine book for each slot (multi-book aware)
+        const s1BookTitle = s1Pages.length > 0
+          ? (validPagesWithBook.find(p => p.page === s1Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
+          : effectiveBooks[0]?.title || 'assigned text';
+        const s2BookTitle = s2Pages.length > 0
+          ? (validPagesWithBook.find(p => p.page === s2Pages[0])?.book || effectiveBooks[0]?.title || 'assigned text')
+          : effectiveBooks[0]?.title || 'assigned text';
+
         previewItems.push({
           day: dayNum,
           dateStr,
           slot: slot1Hours,
           pages: s1Pages,
           pagesText: r1Text,
-          description: generatePlannerDescription(plannerBookTitle, r1Text, plannerDescriptionStyle, false),
+          description: generatePlannerDescription(s1BookTitle, r1Text, plannerDescriptionStyle, false),
           remarks: s1Pages.length > 0 ? r1Text : "-"
         });
 
@@ -753,7 +886,7 @@ export default function App() {
           slot: slot2Hours,
           pages: s2Pages,
           pagesText: r2Text,
-          description: generatePlannerDescription(plannerBookTitle, r2Text, plannerDescriptionStyle, true),
+          description: generatePlannerDescription(s2BookTitle, r2Text, plannerDescriptionStyle, true),
           remarks: s2Pages.length > 0 ? r2Text : "-"
         });
       }
@@ -802,6 +935,7 @@ export default function App() {
     setEntries([...newLogs, ...finalEntries]);
     setPlannerPreviewPlan(null); // Clear preview plan
     setPlannerBookTitle(""); // Clear book title
+    setPlannerBookQueue([]); // Clear book queue
     setPlannerExcludePages(""); // Clear exclusions
     setBuilderSelectedDays([]); // Clear selected days
     setIsReadingPlanner(false);
@@ -907,6 +1041,109 @@ export default function App() {
       selectedEntryIds.includes(e.id) ? { ...e, activityType } : e
     ));
     triggerAlert("Bulk Update", `Activity type updated for ${selectedEntryIds.length} entries.`);
+  };
+
+  const handleBulkDuplicate = () => {
+    if (selectedEntryIds.length === 0) return;
+    const toDuplicate = entries.filter(e => selectedEntryIds.includes(e.id));
+    const duplicated: LogEntry[] = toDuplicate.map(e => ({
+      ...e,
+      id: `dup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    }));
+    setEntries(prev => [...duplicated, ...prev]);
+    setSelectedEntryIds([]);
+    triggerAlert("Duplicated", `${duplicated.length} ${duplicated.length === 1 ? 'entry' : 'entries'} duplicated.`);
+  };
+
+  // --- Month-to-Month Copy ---
+  const handleCopyFromPreviousMonth = () => {
+    let prevMonth = selectedMonth - 1;
+    let prevYear = selectedYear;
+    if (prevMonth < 0) { prevMonth = 11; prevYear--; }
+    
+    const prevPrefix = `${prevYear}-${String(prevMonth + 1).padStart(2, '0')}`;
+    const prevEntries = entries.filter(e => e.date.startsWith(prevPrefix));
+    
+    if (prevEntries.length === 0) {
+      triggerAlert("No Data", `No entries found for ${new Date(prevYear, prevMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. Nothing to copy.`);
+      return;
+    }
+
+    triggerConfirm(
+      "Copy Previous Month?",
+      `Copy ${prevEntries.length} entries from ${new Date(prevYear, prevMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} into ${selectedMonthName} ${selectedYear}? Descriptions will be copied, dates adjusted to equivalent days.`,
+      () => {
+        const daysInTarget = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+        const targetPrefix = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
+        
+        const copied: LogEntry[] = prevEntries
+          .map(e => {
+            const dayNum = parseInt(e.date.split('-')[2]);
+            if (dayNum > daysInTarget) return null;
+            return {
+              ...e,
+              id: `copy-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              date: `${targetPrefix}-${String(dayNum).padStart(2, '0')}`
+            };
+          })
+          .filter(Boolean) as LogEntry[];
+
+        setEntries(prev => [...copied, ...prev]);
+        triggerAlert("Month Copied", `${copied.length} entries copied into ${selectedMonthName} ${selectedYear}.`);
+      }
+    );
+  };
+
+  // --- PDF Export ---
+  const handlePdfExport = async () => {
+    setShowPrintView(true);
+    // Wait for render, then use browser print as PDF
+    setTimeout(() => {
+      try { window.print(); } catch(e) {}
+    }, 500);
+  };
+
+  // --- Attendance Summary Stats ---
+  const attendanceSummary = useMemo(() => {
+    const monthPrefix = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
+    const monthEntries = entries.filter(e => e.date.startsWith(monthPrefix));
+    
+    const uniqueDaysWorked = new Set(monthEntries.filter(e => e.activityType !== 'Leave').map(e => e.date)).size;
+    const leaveDays = new Set(monthEntries.filter(e => e.activityType === 'Leave').map(e => e.date)).size;
+    const totalWorkingDays = monthInfo.totalWorkingDays;
+    const attendancePercent = totalWorkingDays > 0 ? Math.round((uniqueDaysWorked / totalWorkingDays) * 100) : 0;
+    const readingHours = monthEntries.filter(e => e.activityType === 'Reading').length * 2;
+    const mentoringHours = monthEntries.filter(e => e.activityType === 'Mentoring').length * 2;
+    const deptHours = monthEntries.filter(e => e.activityType === 'Department Work').length * 2;
+
+    return { uniqueDaysWorked, leaveDays, totalWorkingDays, attendancePercent, readingHours, mentoringHours, deptHours };
+  }, [entries, selectedYear, selectedMonth, monthInfo]);
+
+  // --- Entry Templates ---
+  const handleSaveTemplate = (name: string) => {
+    if (!builderDescription.trim()) {
+      triggerAlert("Empty", "Write a description first before saving as template.");
+      return;
+    }
+    const template = {
+      id: `tmpl-${Date.now()}`,
+      name: name || `Template ${savedTemplates.length + 1}`,
+      activityType: builderActivityType,
+      description: builderDescription,
+      remarks: builderRemarks
+    };
+    setSavedTemplates(prev => [...prev, template]);
+    triggerAlert("Saved", `Template "${template.name}" saved.`);
+  };
+
+  const handleApplyTemplate = (tmpl: typeof savedTemplates[0]) => {
+    setBuilderActivityType(tmpl.activityType);
+    setBuilderDescription(tmpl.description);
+    setBuilderRemarks(tmpl.remarks);
+  };
+
+  const handleDeleteTemplate = (id: string) => {
+    setSavedTemplates(prev => prev.filter(t => t.id !== id));
   };
 
   // Delete a specific entry
@@ -1377,6 +1614,15 @@ export default function App() {
                 >
                   <Sparkles className="w-4 h-4" />
                   <span>Generate Clean Month</span>
+                </button>
+
+                <button 
+                  onClick={handleCopyFromPreviousMonth}
+                  title="Copy entries from previous month"
+                  className="bg-violet-600/10 hover:bg-violet-600/20 text-violet-400 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border border-violet-500/20 transition-all"
+                >
+                  <CopyPlus className="w-4 h-4" />
+                  <span className="hidden sm:inline">Copy Prev Month</span>
                 </button>
               </div>
             </div>
@@ -2004,6 +2250,41 @@ export default function App() {
                 >
                   <Download className="w-4 h-4" />
                 </button>
+                <button
+                  onClick={handlePdfExport}
+                  title="Export as PDF (opens print dialog)"
+                  className="bg-[#2A2D35] text-gray-300 hover:bg-[#343842] hover:text-white p-2 rounded-lg text-xs font-semibold flex items-center justify-center transition-all shrink-0 border border-[#343842]"
+                >
+                  <FileDown className="w-4 h-4" />
+                </button>
+                <div className="h-5 w-px bg-[#2A2D35]"></div>
+                <button
+                  onClick={handleUndo}
+                  disabled={undoStack.length < 2}
+                  title="Undo (Cmd+Z)"
+                  className="text-gray-400 hover:text-white p-2 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={redoStack.length === 0}
+                  title="Redo (Cmd+Shift+Z)"
+                  className="text-gray-400 hover:text-white p-2 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+                <div className="h-5 w-px bg-[#2A2D35]"></div>
+                <button
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+                  className="text-gray-400 hover:text-yellow-400 p-2 rounded-lg transition-all"
+                >
+                  {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+                <span className={`flex items-center gap-1 text-[10px] font-semibold ${isOnline ? 'text-emerald-400' : 'text-red-400'}`} title={isOnline ? 'Online' : 'Offline — changes saved locally'}>
+                  {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                </span>
                 <button 
                   onClick={() => {
                     setShowEntryBuilder(!showEntryBuilder);
@@ -2205,6 +2486,8 @@ export default function App() {
                             const date = new Date(selectedYear, selectedMonth, day);
                             const isSelected = builderSelectedDays.includes(day);
                             const stat = getDayStatus(date, holidays, true, true);
+                            const dayDateStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            const dayEntryCount = entries.filter(e => e.date === dayDateStr).length;
                             return (
                               <button
                                 key={day}
@@ -2221,10 +2504,13 @@ export default function App() {
                                     ? 'bg-[#101216]/50 text-gray-700 opacity-50 line-through border border-red-950/20'
                                     : 'bg-[#1C1F26] text-gray-400 hover:bg-[#2A2D35] border border-[#2A2D35]'
                                 }`}
-                                title={`${date.toLocaleDateString()} - ${stat.reason || 'Working Day'}`}
+                                title={`${date.toLocaleDateString()} - ${stat.reason || 'Working Day'}${dayEntryCount > 0 ? ` (${dayEntryCount} entries)` : ''}`}
                               >
                                 <span>{day}</span>
                                 <span className="text-[7px] text-gray-500 leading-none">{date.toLocaleDateString('en-US', { weekday: 'narrow' })}</span>
+                                {dayEntryCount > 0 && (
+                                  <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${dayEntryCount >= 2 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                )}
                               </button>
                             );
                           })}
@@ -2416,6 +2702,49 @@ export default function App() {
                             </button>
                           </div>
                         </div>
+
+                        {/* Custom Saved Templates */}
+                        <div className="space-y-1.5 border-t border-[#2A2D35] pt-3 mt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">💾 Your Saved Templates:</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const name = prompt("Template name:");
+                                if (name) handleSaveTemplate(name);
+                              }}
+                              className="text-[10px] bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 px-2.5 py-1 rounded-md font-semibold transition-colors flex items-center gap-1"
+                            >
+                              <Save className="w-3 h-3" />
+                              Save Current
+                            </button>
+                          </div>
+                          {savedTemplates.length === 0 ? (
+                            <p className="text-[10px] text-gray-500 italic">No saved templates yet. Fill in a description above and click "Save Current".</p>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto">
+                              {savedTemplates.map(tmpl => (
+                                <div key={tmpl.id} className="flex items-center gap-1.5 p-2 bg-[#101216] border border-[#2A2D35] rounded-lg text-[10px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApplyTemplate(tmpl)}
+                                    className="flex-1 text-left text-gray-300 hover:text-white transition-colors"
+                                  >
+                                    <span className="font-bold text-emerald-400 block">{tmpl.name}</span>
+                                    <span className="text-gray-500 text-[9px] line-clamp-1 italic">{tmpl.description}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteTemplate(tmpl.id)}
+                                    className="text-gray-500 hover:text-red-400 p-0.5"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </>
                     ) : (
                       /* Smart Book Reading Planner View */
@@ -2468,6 +2797,43 @@ export default function App() {
                               className="w-full bg-[#101216] text-xs text-white border border-[#2A2D35] rounded-lg p-2 font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
                             />
                           </div>
+                        </div>
+
+                        {/* Multi-book queue */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">📚 Book Queue ({plannerBookQueue.length} books):</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!plannerBookTitle.trim()) return;
+                                setPlannerBookQueue(prev => [...prev, { title: plannerBookTitle, startPage: plannerStartPage, endPage: plannerEndPage }]);
+                                setPlannerBookTitle("");
+                                setPlannerStartPage(1);
+                                setPlannerEndPage(150);
+                                setPlannerPreviewPlan(null);
+                              }}
+                              className="text-[10px] bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 px-2.5 py-1 rounded-md font-semibold transition-colors flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Add to Queue
+                            </button>
+                          </div>
+                          {plannerBookQueue.length > 0 && (
+                            <div className="space-y-1 max-h-24 overflow-y-auto">
+                              {plannerBookQueue.map((book, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-1.5 bg-[#101216] border border-[#2A2D35] rounded text-[10px]">
+                                  <span className="text-gray-300 truncate flex-1">{book.title} <span className="text-gray-500">(pp. {book.startPage}-{book.endPage})</span></span>
+                                  <button type="button" onClick={() => setPlannerBookQueue(prev => prev.filter((_, i) => i !== idx))} className="text-gray-500 hover:text-red-400 ml-2">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {plannerBookQueue.length === 0 && (
+                            <p className="text-[9px] text-gray-500 italic">Add multiple books above. They'll be distributed sequentially across selected days. Or use a single book directly.</p>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
@@ -2661,6 +3027,13 @@ export default function App() {
                       ))}
                     </div>
                   </div>
+                  <button 
+                    onClick={handleBulkDuplicate}
+                    className="text-[10px] bg-violet-600/10 hover:bg-violet-600/20 text-violet-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Duplicate
+                  </button>
                 </div>
                 <button 
                   onClick={() => setSelectedEntryIds([])}
@@ -2856,6 +3229,37 @@ export default function App() {
               </div>
             </div>
 
+          </section>
+
+          {/* --- Attendance Summary Card --- */}
+          <section className="bg-[#15171C] rounded-2xl border border-[#2A2D35] p-5 shadow-sm">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-1.5 font-display mb-4">
+              <CalendarDays className="w-4 h-4 text-blue-500" />
+              <span>Attendance Summary — {selectedMonthName} {selectedYear}</span>
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                <div className="text-2xl font-bold text-blue-400">{attendanceSummary.uniqueDaysWorked}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Days Attended</div>
+              </div>
+              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                <div className="text-2xl font-bold text-rose-400">{attendanceSummary.leaveDays}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Leave Days</div>
+              </div>
+              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                <div className={`text-2xl font-bold ${attendanceSummary.attendancePercent >= 75 ? 'text-emerald-400' : 'text-amber-400'}`}>{attendanceSummary.attendancePercent}%</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Attendance</div>
+              </div>
+              <div className="bg-[#1C1F26] rounded-xl p-3 border border-[#2A2D35] text-center">
+                <div className="text-2xl font-bold text-purple-400">{attendanceSummary.readingHours}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">Reading Hrs</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 mt-3 text-[11px] text-gray-400">
+              <span>Mentoring: <strong className="text-white">{attendanceSummary.mentoringHours} hrs</strong></span>
+              <span>Dept Work: <strong className="text-white">{attendanceSummary.deptHours} hrs</strong></span>
+              <span>Total Working Days: <strong className="text-white">{attendanceSummary.totalWorkingDays}</strong></span>
+            </div>
           </section>
 
           {/* Quick Informational Guide Cards - Bottom segment */}

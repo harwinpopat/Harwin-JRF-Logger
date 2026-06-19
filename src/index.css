@@ -7,367 +7,235 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-/* ==========================================================================
-   Elegant & Soothing Academic Scholar Theme (Light Linen & Sage/Stone)
-   Remaps pitch-black sci-fi values back to aesthetic stationery materials.
-   ========================================================================== */
-
-/* 1. Reset Global Container and Background to Linen White */
-div#jrf-app-container,
-.bg-\[\#0F1115\] {
-  background-color: #F8F7F4 !important;
-  color: #3E3C38 !important;
-}
-
-/* Safe default text overrides */
-body {
-  background-color: #F8F7F4;
-  color: #3E3C38;
-}
-
-/* 2. Overlap Card Blocks is styled to Crispy Soft White with subtle shadows */
-.bg-\[\#15171C\] {
-  background-color: #FFFFFF !important;
-  box-shadow: 0 4px 20px -2px rgba(90, 85, 75, 0.05), 0 2px 6px -1px rgba(90, 85, 75, 0.03) !important;
-  border-color: #E2DFD8 !important;
-}
-
-/* 3. Section Headers, Side Cards, Accent Blocks to Warm Clay Cement */
-.bg-\[\#1C1F26\] {
-  background-color: #F1EFEA !important;
-}
-
-/* Active forms/drawers and popups */
-.bg-\[\#161920\],
-.bg-\[\#1D212A\] {
-  background-color: #FFFFFF !important;
-  border-color: #E2DFD8 !important;
-}
-
-/* 4. Active Text Inputs, List Pre-fills to Ivory White */
-.bg-\[\#101216\] {
-  background-color: #FAF9F6 !important;
-}
-
-/* 5. Precise Soft Sepia Borders */
-.border-\[\#2A2D35\] {
-  border-color: #E2DFD8 !important;
-}
-hr.border-\[\#2A2D35\] {
-  border-color: #EADECB !important;
-}
-.border-stone-200, .border-gray-700 {
-  border-color: #E2DFD8 !important;
-}
-
-/* 6. Typography Overrides - Crisp & Sophisticated Warm Charcoal */
-#jrf-app-container .text-white {
-  color: #1D1B18 !important;
-}
-.text-\[\#E0E0E0\] {
-  color: #3E3C38 !important;
-}
-.text-gray-150 {
-  color: #2F2E2B !important;
-}
-.text-gray-200 {
-  color: #2F2E2B !important;
-}
-.text-gray-300 {
-  color: #3E3C38 !important;
-}
-.text-gray-450,
-.text-gray-400 {
-  color: #55524B !important;
-}
-.text-gray-500 {
-  color: #6D6A61 !important;
-}
-.text-gray-650,
-.text-gray-600 {
-  color: #928E84 !important;
-}
-::placeholder,
-.placeholder-gray-650,
-.placeholder-gray-600 {
-  color: #A5A196 !important;
-}
-
-/* 7. Beautiful & Muted Sage Green / Slate Accent Overrides */
-.text-blue-400,
-.text-blue-500,
-.text-\[\#38BDF8\] {
-  color: #43634E !important;
-}
-
-/* Primary buttons and pillars: Sage Green */
-.bg-blue-600,
-.bg-blue-550,
-.bg-blue-500 {
-  background-color: #4A6D55 !important;
-}
-.bg-blue-600:hover,
-.bg-blue-550:hover,
-.bg-blue-500:hover {
-  background-color: #395441 !important;
-}
-
-/* Solid colored buttons and badges must force light text */
-#jrf-app-container .bg-blue-600,
-#jrf-app-container .bg-blue-500,
-#jrf-app-container .bg-emerald-600,
-#jrf-app-container .bg-amber-600,
-#jrf-app-container .bg-red-600 {
-  color: #FFFFFF !important;
-}
-
-#jrf-app-container .bg-blue-600 *,
-#jrf-app-container .bg-blue-500 *,
-#jrf-app-container .bg-emerald-600 *,
-#jrf-app-container .bg-amber-600 *,
-#jrf-app-container .bg-red-600 * {
-  color: #FFFFFF !important;
-}
-
-/* Soothing soft background tags */
-.bg-blue-600\/10,
-.bg-blue-500\/10 {
-  background-color: #FAF9F6 !important;
-  color: #43634E !important;
-  border-color: #DECDB5 !important;
-}
-.bg-blue-950\/40 {
-  background-color: #FAF9F6 !important;
-  color: #43634E !important;
-  border-color: #DECDB5 !important;
-}
-.bg-blue-900\/10 {
-  background-color: rgba(67, 99, 78, 0.05) !important;
-}
-.border-sky-400\/20,
-.border-blue-500\/20,
-.border-blue-600\/20 {
-  border-color: #E2DFD8 !important;
-}
-
-/* Focus and active input outlines */
-.focus\:ring-blue-500:focus,
-.focus\:border-blue-500:focus {
-  border-color: #4A6D55 !important;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(74, 109, 85, 0.15) !important;
-}
-
-/* Correcting shadow-blue references to a natural earthy shadow */
-.shadow-blue-600\/20,
-.shadow-blue-600\/10,
-.shadow-blue-900\/30 {
-  box-shadow: 0 4px 12px 0 rgba(74, 109, 85, 0.08) !important;
-}
-
-/* 8. Specific dropdown element fixes to render perfectly on light background */
-select.bg-\[\#1C1F26\],
-input.bg-\[\#15171C\],
-select.bg-\[\#15171C\] {
-  background-color: #FAF9F6 !important;
-  color: #1D1B18 !important;
-  border-color: #DFDCD6 !important;
-}
-
-/* Selection and table hover updates */
-tr.hover\:bg-\[\#1C1F26\]\/30:hover {
-  background-color: rgba(226, 223, 216, 0.3) !important;
-}
-.bg-blue-900\/10 {
-  background-color: rgba(74, 109, 85, 0.08) !important;
-}
-
 /* 9. Scrollbar Custom styling */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #F8F7F4;
+  background: #0F1115;
 }
 ::-webkit-scrollbar-thumb {
-  background: #D5D2C8;
+  background: #2A2D35;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #B9B5A9;
-}
-
-/* 10. Tag Color Harmonizations to match soothing aesthetic */
-.text-emerald-400 {
-  color: #2A6648 !important;
-}
-.bg-emerald-950\/40 {
-  background-color: rgba(42, 102, 72, 0.08) !important;
-  color: #2A6648 !important;
-}
-.bg-emerald-600 {
-  background-color: #2A6648 !important;
-}
-.bg-emerald-600:hover {
-  background-color: #1E4933 !important;
-}
-.bg-emerald-500\/10 {
-  background-color: rgba(42, 102, 72, 0.12) !important;
-  color: #2A6648 !important;
-}
-
-.text-purple-400 {
-  color: #634394 !important;
-}
-.bg-purple-950\/40 {
-  background-color: rgba(99, 67, 148, 0.08) !important;
-  color: #634394 !important;
-}
-
-.text-rose-400, .text-red-400 {
-  color: #9C333D !important;
-}
-.bg-rose-950\/40 {
-  background-color: rgba(156, 51, 61, 0.08) !important;
-  color: #9C333D !important;
-}
-.bg-red-600\/10 {
-  background-color: rgba(156, 51, 61, 0.12) !important;
-}
-
-/* 11. Overriding dark gray structural elements like #2A2D35 and #343842 to elegant warm stone colors */
-.bg-\[\#2A2D35\] {
-  background-color: #EADECB !important;
-  color: #1D1B18 !important;
-  border-color: #DFD0BD !important;
-}
-.bg-\[\#2A2D35\]:hover,
-.hover\:bg-\[\#343842\]:hover {
-  background-color: #DECDB5 !important;
-  color: #1D1B18 !important;
-  border-color: #CBB99F !important;
-}
-/* Force text colors for structural gray buttons inside app container to read correctly */
-#jrf-app-container .bg-\[\#2A2D35\],
-#jrf-app-container .bg-\[\#2A2D35\] *,
-#jrf-app-container .hover\:bg-\[\#343842\]:hover,
-#jrf-app-container .hover\:bg-\[\#343842\]:hover * {
-  color: #1D1B18 !important;
-}
-
-/* Date Pickers style overrides for light mode */
-input[type="date"] {
-  color-scheme: light !important;
+  background: #3A3D45;
 }
 
 /* ==========================================================================
-   ELEGANT LIGHT MODEL OVERRIDES FOR DESIGN SEGMENTS & CONTRAST
-   Increases legibility of critical sections, headers, and inputs.
+   LIGHT THEME - Elegant Academic Scholar Theme (Linen & Sage/Stone)
+   Only active when html.light-theme is set
    ========================================================================== */
 
-/* A. Sticky Top Navigation Header Bar (#app-header-nav) */
-#app-header-nav {
-  background-color: rgba(248, 247, 244, 0.95) !important;
-  border-bottom-color: #E2DFD8 !important;
+.light-theme ::-webkit-scrollbar-track {
+  background: #F8F7F4;
 }
-#app-header-nav h1,
-#app-header-nav p,
-#app-header-nav span,
-#app-header-nav a,
-#app-header-nav button {
-  text-shadow: none !important;
+.light-theme ::-webkit-scrollbar-thumb {
+  background: #D5D2C8;
+  border-radius: 3px;
+}
+.light-theme ::-webkit-scrollbar-thumb:hover {
+  background: #B9B5A9;
 }
 
-/* Nav links & action buttons hover */
-#app-header-nav a:hover,
-#app-header-nav button:hover {
-  background-color: #EADECB !important;
+/* 1. Global Container and Background to Linen White */
+.light-theme div#jrf-app-container,
+.light-theme .bg-\[\#0F1115\] {
+  background-color: #F8F7F4 !important;
+  color: #3E3C38 !important;
 }
 
-/* B. Overriding background-opacity and arbitrary translucent modifiers */
-.bg-\[\#15171C\]\/90 {
-  background-color: rgba(255, 255, 255, 0.92) !important;
-}
-.bg-\[\#1C1F26\]\/50 {
-  background-color: rgba(226, 223, 216, 0.5) !important;
-  border-color: #D5D2C8 !important;
-}
-.bg-\[\#1C1F26\]\/40 {
-  background-color: rgba(226, 223, 216, 0.45) !important;
-  border-color: #D5D2C8 !important;
-}
-.bg-\[\#1C1F26\]\/30 {
-  background-color: rgba(226, 223, 216, 0.35) !important;
-  border-color: #D5D2C8 !important;
-}
-.bg-\[\#101216\]\/50 {
-  background-color: rgba(226, 223, 216, 0.5) !important;
-  border-color: #D5D2C8 !important;
+.light-theme body {
+  background-color: #F8F7F4;
+  color: #3E3C38;
 }
 
-/* C. Dynamic State Hover & Active selections */
-.hover\:bg-\[\#1C1F26\]:hover {
-  background-color: #E2DFD8 !important;
-  color: #1D1B18 !important;
-}
-.hover\:bg-\[\#1C1F26\]\/30:hover {
-  background-color: rgba(226, 223, 216, 0.4) !important;
-}
-
-/* D. Forms, Inputs, and Textareas High-Contrast Overrides */
-#jrf-app-container textarea,
-#jrf-app-container input[type="text"],
-#jrf-app-container input[type="date"],
-#jrf-app-container select {
+/* 2. Card Blocks to Crispy Soft White */
+.light-theme .bg-\[\#15171C\] {
   background-color: #FFFFFF !important;
-  color: #1D1B18 !important;
-  border: 1px solid #C5C2B9 !important;
+  box-shadow: 0 4px 20px -2px rgba(90, 85, 75, 0.05), 0 2px 6px -1px rgba(90, 85, 75, 0.03) !important;
+  border-color: #E2DFD8 !important;
 }
 
-#jrf-app-container textarea:hover,
-#jrf-app-container input[type="text"]:hover,
-#jrf-app-container input[type="date"]:hover,
-#jrf-app-container select:hover {
+/* 3. Section Headers to Warm Clay */
+.light-theme .bg-\[\#1C1F26\] {
+  background-color: #F1EFEA !important;
+}
+
+/* Active forms/drawers */
+.light-theme .bg-\[\#161920\],
+.light-theme .bg-\[\#1D212A\] {
+  background-color: #FFFFFF !important;
+  border-color: #E2DFD8 !important;
+}
+
+/* 4. Text Inputs to Ivory White */
+.light-theme .bg-\[\#101216\] {
   background-color: #FAF9F6 !important;
-  border-color: #A5A196 !important;
 }
 
-#jrf-app-container textarea:focus,
-#jrf-app-container input[type="text"]:focus,
-#jrf-app-container input[type="date"]:focus,
-#jrf-app-container select:focus {
-  background-color: #FFFFFF !important;
+/* 5. Soft Sepia Borders */
+.light-theme .border-\[\#2A2D35\] {
+  border-color: #E2DFD8 !important;
+}
+
+/* 6. Typography Overrides */
+.light-theme #jrf-app-container .text-white {
   color: #1D1B18 !important;
+}
+.light-theme .text-\[\#E0E0E0\] {
+  color: #3E3C38 !important;
+}
+.light-theme .text-gray-200 {
+  color: #2F2E2B !important;
+}
+.light-theme .text-gray-300 {
+  color: #3E3C38 !important;
+}
+.light-theme .text-gray-400 {
+  color: #55524B !important;
+}
+.light-theme .text-gray-500 {
+  color: #6D6A61 !important;
+}
+.light-theme .text-gray-600 {
+  color: #928E84 !important;
+}
+.light-theme ::placeholder {
+  color: #A5A196 !important;
+}
+
+/* 7. Accent Colors - Sage Green */
+.light-theme .text-blue-400,
+.light-theme .text-blue-500 {
+  color: #43634E !important;
+}
+
+.light-theme .bg-blue-600,
+.light-theme .bg-blue-500 {
+  background-color: #4A6D55 !important;
+}
+.light-theme .bg-blue-600:hover,
+.light-theme .bg-blue-500:hover {
+  background-color: #395441 !important;
+}
+
+/* Solid buttons force light text */
+.light-theme #jrf-app-container .bg-blue-600,
+.light-theme #jrf-app-container .bg-blue-500,
+.light-theme #jrf-app-container .bg-emerald-600,
+.light-theme #jrf-app-container .bg-amber-600,
+.light-theme #jrf-app-container .bg-red-600 {
+  color: #FFFFFF !important;
+}
+.light-theme #jrf-app-container .bg-blue-600 *,
+.light-theme #jrf-app-container .bg-blue-500 *,
+.light-theme #jrf-app-container .bg-emerald-600 *,
+.light-theme #jrf-app-container .bg-amber-600 *,
+.light-theme #jrf-app-container .bg-red-600 * {
+  color: #FFFFFF !important;
+}
+
+/* Muted tag backgrounds */
+.light-theme .bg-blue-600\/10 {
+  background-color: #FAF9F6 !important;
+  color: #43634E !important;
+  border-color: #DECDB5 !important;
+}
+
+/* Focus rings */
+.light-theme .focus\:ring-blue-500:focus {
   border-color: #4A6D55 !important;
   box-shadow: 0 0 0 2px rgba(74, 109, 85, 0.15) !important;
 }
 
-/* Fix for transparent inputs on workbench table */
-#jrf-app-container .bg-transparent {
-  background-color: transparent !important;
+/* 8. Structural elements */
+.light-theme .bg-\[\#2A2D35\] {
+  background-color: #EADECB !important;
+  color: #1D1B18 !important;
+  border-color: #DFD0BD !important;
 }
-td p, td span {
-  color: inherit;
+.light-theme .bg-\[\#2A2D35\]:hover,
+.light-theme .hover\:bg-\[\#343842\]:hover {
+  background-color: #DECDB5 !important;
+  color: #1D1B18 !important;
+}
+.light-theme #jrf-app-container .bg-\[\#2A2D35\],
+.light-theme #jrf-app-container .bg-\[\#2A2D35\] * {
+  color: #1D1B18 !important;
 }
 
-/* Select option background fix so the words are perfectly legible when expanding dropdowns */
-#jrf-app-container select option {
+/* 10. Tag Color Harmonizations */
+.light-theme .text-emerald-400 {
+  color: #2A6648 !important;
+}
+.light-theme .bg-emerald-600 {
+  background-color: #2A6648 !important;
+}
+.light-theme .text-purple-400 {
+  color: #634394 !important;
+}
+.light-theme .text-rose-400, .light-theme .text-red-400 {
+  color: #9C333D !important;
+}
+.light-theme .bg-red-600\/10 {
+  background-color: rgba(156, 51, 61, 0.12) !important;
+}
+.light-theme .text-violet-400 {
+  color: #5B21B6 !important;
+}
+.light-theme .bg-violet-600\/10 {
+  background-color: rgba(91, 33, 182, 0.08) !important;
+}
+.light-theme .text-amber-400 {
+  color: #92400E !important;
+}
+
+/* Translucent backgrounds */
+.light-theme .bg-\[\#1C1F26\]\/40,
+.light-theme .bg-\[\#1C1F26\]\/30 {
+  background-color: rgba(226, 223, 216, 0.45) !important;
+}
+
+/* Forms */
+.light-theme #jrf-app-container textarea,
+.light-theme #jrf-app-container input[type="text"],
+.light-theme #jrf-app-container input[type="number"],
+.light-theme #jrf-app-container input[type="date"],
+.light-theme #jrf-app-container select {
+  background-color: #FFFFFF !important;
+  color: #1D1B18 !important;
+  border: 1px solid #C5C2B9 !important;
+}
+.light-theme #jrf-app-container textarea:focus,
+.light-theme #jrf-app-container input:focus,
+.light-theme #jrf-app-container select:focus {
+  border-color: #4A6D55 !important;
+  box-shadow: 0 0 0 2px rgba(74, 109, 85, 0.15) !important;
+}
+.light-theme #jrf-app-container select option {
   background-color: #FFFFFF !important;
   color: #1D1B18 !important;
 }
 
-/* User targeted header badges overrides to fix flat green-on-green combo */
-div#root:nth-of-type(1) > div#jrf-app-container:nth-of-type(1) > div:nth-of-type(2) > header#app-header-nav:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > p:nth-of-type(1) > span:nth-of-type(2) {
-  background-color: #FAF9F6 !important;
-  color: #55524B !important;
-  border: 1px solid #DECDB5 !important;
+/* Date inputs */
+.light-theme input[type="date"] {
+  color-scheme: light !important;
 }
 
-div#root:nth-of-type(1) > div#jrf-app-container:nth-of-type(1) > div:nth-of-type(2) > header#app-header-nav:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > h1:nth-of-type(1) > span:nth-of-type(1) {
-  background-color: #FAF9F6 !important;
-  color: #43634E !important;
-  border: 1px solid #DECDB5 !important;
+/* Hover states */
+.light-theme .hover\:bg-\[\#1C1F26\]:hover {
+  background-color: #E2DFD8 !important;
+  color: #1D1B18 !important;
 }
 
+/* Modal overlays */
+.light-theme .bg-black\/70 {
+  background-color: rgba(0, 0, 0, 0.4) !important;
+}
 
+/* Transparent cell inputs in light mode */
+.light-theme #jrf-app-container .bg-transparent {
+  background-color: transparent !important;
+}
