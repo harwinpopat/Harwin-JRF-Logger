@@ -1186,14 +1186,34 @@ export default function App() {
     const targetDates = sortedDays.map(d => `${selectedYear}-${monthStr}-${String(d).padStart(2, '0')}`);
 
     // Fetch existing "Reading" or empty template entries on these days
-    const existingReadingEntries = entries.filter(e => 
-      targetDates.includes(e.date) && 
-      (e.activityType === "Reading" || e.activityType === "" || !e.activityType)
-    );
+    const entriesOnTheseDays = entries.filter(e => targetDates.includes(e.date));
+
+    const existingReadingEntries = entriesOnTheseDays.filter(e => {
+      const act = (e.activityType || "").trim().toLowerCase();
+      return act === "reading" || 
+             act.includes("reading") || 
+             act.includes("read") || 
+             act === "study" || 
+             act === "" || 
+             !e.activityType;
+    });
 
     const K = existingReadingEntries.length;
     if (K === 0) {
-      triggerAlert("Validation Notice", `No existing Reading or empty slots found for selected days (${sortedDays.join(', ')}). Formulate or convert entries to "Reading" first!`);
+      if (entriesOnTheseDays.length > 0) {
+        const existingDetails = entriesOnTheseDays.map(e => `Day ${e.date.split('-')[2]} (${e.timeSlot}): "${e.activityType}"`).join('\n');
+        triggerAlert(
+          "No Reading Slots Found", 
+          `We found ${entriesOnTheseDays.length} entry/entries on selected day(s) ${sortedDays.join(', ')} for ${selectedMonthName} ${selectedYear}, but none are classified as "Reading":\n\n${existingDetails}\n\nPlease verify or convert those slots to "Reading" first!`
+        );
+      } else {
+        const matchingTrailingDay = entries.filter(e => e.date.endsWith(`-${String(sortedDays[0]).padStart(2, '0')}`));
+        const otherDateDetails = matchingTrailingDay.map(e => `${e.date} (${e.activityType})`).join('\n') || 'None';
+        triggerAlert(
+          "No Entries Found", 
+          `No existing log entries of any type were found on date(s): ${targetDates.join(', ')}.\n\nAll entries in database ending in Day ${String(sortedDays[0]).padStart(2, '0')} across other months/years:\n${otherDateDetails}`
+        );
+      }
       return;
     }
 
