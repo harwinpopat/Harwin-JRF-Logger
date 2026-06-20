@@ -161,15 +161,16 @@ export default function App() {
   // --- Offline/PWA Status ---
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
 
-  // Default builderDay to today's date if it fits in selected month, otherwise default to 1
+  // Default builderDay to today's date if it fits in selected month, otherwise default to 1, and sync builderSelectedDays
   useEffect(() => {
     const today = new Date();
+    let initialDay = 1;
     if (today.getFullYear() === selectedYear && today.getMonth() === selectedMonth) {
       const maxDays = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-      setBuilderDay(today.getDate() <= maxDays ? today.getDate() : 1);
-    } else {
-      setBuilderDay(1);
+      initialDay = today.getDate() <= maxDays ? today.getDate() : 1;
     }
+    setBuilderDay(initialDay);
+    setBuilderSelectedDays([initialDay]);
   }, [selectedYear, selectedMonth, showEntryBuilder]);
   
   // Custom slots config
@@ -1163,12 +1164,10 @@ export default function App() {
   const handleAddRichEntries = () => {
     const monthStr = String(selectedMonth + 1).padStart(2, '0');
     
-    const daysToCreate: number[] = builderMultiDaySelect
-      ? [...builderSelectedDays].sort((a, b) => a - b)
-      : [builderDay];
+    const daysToCreate: number[] = [...builderSelectedDays].sort((a, b) => a - b);
 
     if (daysToCreate.length === 0) {
-      triggerAlert("Selection Error", "Please select at least one day of the month!");
+      triggerAlert("Selection Error", "Please select at least one day on the calendar first!");
       return;
     }
 
@@ -1199,11 +1198,6 @@ export default function App() {
     });
 
     setEntries(prev => [...newLogs, ...prev]);
-
-    // Keep state clean but useful
-    setBuilderDescription("");
-    setBuilderRemarks("-");
-    setBuilderSelectedDays([]);
     
     let message = `Successfully added ${newLogs.length} JRF log entries.`;
     if (duplicatesList.length > 0) {
@@ -1211,7 +1205,6 @@ export default function App() {
     }
     
     triggerAlert("Entries Added", message);
-    setShowEntryBuilder(false);
   };
 
   // Bulk Selection Handlers
@@ -2709,22 +2702,7 @@ export default function App() {
                       <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                         Log Entry Mode:
                       </label>
-                      <div className="grid grid-cols-3 p-1 bg-[#101216] border border-[#2A2D35] rounded-xl w-full mb-2 select-none">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBuilderMultiDaySelect(false);
-                            setIsReadingPlanner(false);
-                          }}
-                          className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
-                            !builderMultiDaySelect && !isReadingPlanner
-                              ? 'bg-blue-600 text-white shadow-md shadow-blue-950/40' 
-                              : 'bg-transparent text-gray-300 hover:text-white'
-                          }`}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Single</span>
-                        </button>
+                      <div className="grid grid-cols-2 p-1 bg-[#101216] border border-[#2A2D35] rounded-xl w-full mb-2 select-none">
                         <button
                           type="button"
                           onClick={() => {
@@ -2732,13 +2710,13 @@ export default function App() {
                             setIsReadingPlanner(false);
                           }}
                           className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
-                            builderMultiDaySelect && !isReadingPlanner
-                              ? 'bg-amber-600 text-white shadow-md shadow-amber-950/40' 
+                            !isReadingPlanner
+                              ? 'bg-blue-600 text-white shadow-md shadow-blue-950/40' 
                               : 'bg-transparent text-gray-300 hover:text-white'
                           }`}
                         >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>Bulk</span>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Custom Entry (Single/Bulk)</span>
                         </button>
                         <button
                           type="button"
@@ -2747,92 +2725,76 @@ export default function App() {
                             setIsReadingPlanner(true);
                           }}
                           className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer border-[#2A2D35] ${
-                            builderMultiDaySelect && isReadingPlanner
+                            isReadingPlanner
                               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40' 
                               : 'bg-transparent text-gray-300 hover:text-white'
                           }`}
                         >
                           <BookOpen className="w-3.5 h-3.5" />
-                          <span>Reading</span>
+                          <span>Reading Planner</span>
                         </button>
                       </div>
                     </div>
 
-                    {!builderMultiDaySelect ? (
-                      /* Single Day Picker */
-                      <div className="space-y-1.5">
+                    {/* Unified Interactive Calendar Grid */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
                         <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                          Select Day of the Month:
+                          Choose Target Calendar Days:
                         </label>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={builderDay}
-                            onChange={(e) => setBuilderDay(Number(e.target.value))}
-                            className="p-2 text-xs font-mono font-bold bg-[#101216] text-white border border-[#2A2D35] rounded-lg focus:outline-none focus:border-blue-500 w-24"
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const endDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+                              const workingDays: number[] = [];
+                              for (let d = 1; d <= endDay; d++) {
+                                const date = new Date(selectedYear, selectedMonth, d);
+                                if (getDayStatus(date, holidays, true, true).isWorkingDay) {
+                                  workingDays.push(d);
+                                }
+                              }
+                              setBuilderSelectedDays(workingDays);
+                            }}
+                            className="text-[9px] bg-blue-600/10 border border-blue-500/10 hover:bg-blue-600/20 text-blue-400 rounded px-1.5 py-0.5 font-semibold transition-all"
                           >
-                            {Array.from({ length: new Date(selectedYear, selectedMonth + 1, 0).getDate() }, (_, i) => i + 1).map((day) => {
-                              const d = new Date(selectedYear, selectedMonth, day);
-                              const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
-                              return (
-                                <option key={day} value={day} className="font-mono bg-[#15171C]">
-                                  Day {String(day).padStart(2, '0')} ({dayName})
-                                </option>
-                              );
-                            })}
-                          </select>
-                          <div className="text-xs text-gray-400 bg-[#101216] border border-[#2A2D35] rounded-lg py-2 px-3 flex-1 flex items-center justify-between">
-                            <span className="font-mono">Date: {selectedYear}-{String(selectedMonth + 1).padStart(2, '0')}-{String(builderDay).padStart(2, '0')}</span>
-                            {(() => {
-                              const examDate = new Date(selectedYear, selectedMonth, builderDay);
-                              const stat = getDayStatus(examDate, holidays, true, true);
-                              return !stat.isWorkingDay ? (
-                                <span className="text-[10px] text-amber-400 bg-amber-400/5 px-1.5 py-0.5 rounded border border-amber-400/10 font-sans">
-                                  ⚠️ Off-day
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-emerald-400 bg-emerald-400/5 px-1.5 py-0.5 rounded border border-emerald-400/10 font-sans">
-                                  ✓ Work Day
-                                </span>
-                              );
-                            })()}
-                          </div>
+                            All Workdays
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBuilderSelectedDays([])}
+                            className="text-[9px] bg-red-600/10 border border-red-500/10 hover:bg-red-600/20 text-red-500 rounded px-1.5 py-0.5 font-semibold transition-all"
+                          >
+                            Clear Selection
+                          </button>
                         </div>
                       </div>
-                    ) : (
-                      /* Multi-day selectors */
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                            Choose Target Calendar Days:
-                          </label>
-                          <div className="flex gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const endDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-                                const workingDays: number[] = [];
-                                for (let d = 1; d <= endDay; d++) {
-                                  const date = new Date(selectedYear, selectedMonth, d);
-                                  if (getDayStatus(date, holidays, true, true).isWorkingDay) {
-                                    workingDays.push(d);
-                                  }
-                                }
-                                setBuilderSelectedDays(workingDays);
-                              }}
-                              className="text-[9px] bg-blue-600/10 border border-blue-500/10 hover:bg-blue-600/20 text-blue-400 rounded px-1.5 py-0.5 font-semibold transition-all"
-                            >
-                              All Workdays
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setBuilderSelectedDays([])}
-                              className="text-[9px] bg-red-600/10 border border-red-500/10 hover:bg-red-600/20 text-red-500 rounded px-1.5 py-0.5 font-semibold transition-all"
-                            >
-                              Clear Selection
-                            </button>
-                          </div>
+
+                      <div className="bg-[#101216] rounded-xl border border-[#2A2D35] p-3 space-y-2">
+                        {/* Calendar Weekday Headers with Monday on Far Left */}
+                        <div className="grid grid-cols-7 gap-1 text-center font-bold text-[9px] text-gray-500 uppercase tracking-widest select-none pb-1 border-b border-[#2A2D35]/40 mb-1">
+                          <div>Mon</div>
+                          <div>Tue</div>
+                          <div>Wed</div>
+                          <div>Thu</div>
+                          <div>Fri</div>
+                          <div>Sat</div>
+                          <div>Sun</div>
                         </div>
-                        <div className="grid grid-cols-7 gap-1 p-2 bg-[#101216] rounded-xl border border-[#2A2D35] max-h-[145px] overflow-y-auto">
+
+                        {/* Days Grid */}
+                        <div className="grid grid-cols-7 gap-1 max-h-[175px] overflow-y-auto pr-0.5">
+                          {/* Empty padded offset cells so Monday is index 0 */}
+                          {(() => {
+                            const firstDayVal = new Date(selectedYear, selectedMonth, 1).getDay();
+                            // Convert Sunday=0, Monday=1, ..., Saturday=6 to: Monday=0, Tuesday=1, ..., Sunday=6
+                            const offsetDays = firstDayVal === 0 ? 6 : firstDayVal - 1;
+                            return Array.from({ length: offsetDays }).map((_, idx) => (
+                              <div key={`empty-${idx}`} className="h-8 bg-transparent border border-transparent" />
+                            ));
+                          })()}
+
+                          {/* Active Day cells */}
                           {Array.from({ length: new Date(selectedYear, selectedMonth + 1, 0).getDate() }, (_, i) => i + 1).map((day) => {
                             const date = new Date(selectedYear, selectedMonth, day);
                             const isSelected = builderSelectedDays.includes(day);
@@ -2848,29 +2810,45 @@ export default function App() {
                                     prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
                                   );
                                 }}
-                                className={`h-8 font-mono rounded text-[10px] transition-all flex flex-col items-center justify-center relative ${
+                                className={`h-8 font-mono rounded-lg text-[10px] transition-all flex flex-col items-center justify-center relative ${
                                   isSelected 
-                                    ? 'bg-blue-600 text-white font-bold border border-blue-550' 
+                                    ? 'bg-blue-600 text-white font-bold border border-blue-500 shadow-sm shadow-blue-500/20' 
                                     : !stat.isWorkingDay
-                                    ? 'bg-[#101216]/50 text-gray-700 opacity-50 line-through border border-red-950/20'
-                                    : 'bg-[#1C1F26] text-gray-400 hover:bg-[#2A2D35] border border-[#2A2D35]'
+                                    ? 'bg-[#101216]/20 text-gray-600 opacity-50 line-through border border-transparent'
+                                    : 'bg-[#1C1F26] text-gray-300 hover:bg-[#2A2D35] border border-[#2A2D35]'
                                 }`}
                                 title={`${date.toLocaleDateString()} - ${stat.reason || 'Working Day'}${dayEntryCount > 0 ? ` (${dayEntryCount} entries)` : ''}`}
                               >
-                                <span>{day}</span>
-                                <span className="text-[7px] text-gray-500 leading-none">{date.toLocaleDateString('en-US', { weekday: 'narrow' })}</span>
+                                <span className="text-[11px] font-bold">{day}</span>
                                 {dayEntryCount > 0 && (
-                                  <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${dayEntryCount >= 2 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                  <span className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${dayEntryCount >= 2 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                                 )}
                               </button>
                             );
                           })}
                         </div>
-                        <p className="text-[10px] text-gray-400 italic">
-                          Selected {builderSelectedDays.length} days. Overwrites are protected; collisions notified.
-                        </p>
                       </div>
-                    )}
+
+                      {/* Mode details - "If selects one, it is single, otherwise it is bulk" */}
+                      <div className="flex items-center justify-between px-1 bg-[#101216]/20 rounded-lg p-1.5 border border-[#2A2D35]/30">
+                        <span className="text-[10px] text-gray-400 italic font-mono">
+                          Selected {builderSelectedDays.length} {builderSelectedDays.length === 1 ? 'day' : 'days'} this month
+                        </span>
+                        {builderSelectedDays.length === 1 ? (
+                          <span className="text-[9px] px-1.5 py-0.5 font-bold rounded uppercase tracking-wider bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                            ℹ Single Entry Mode
+                          </span>
+                        ) : builderSelectedDays.length > 1 ? (
+                          <span className="text-[9px] px-1.5 py-0.5 font-bold rounded uppercase tracking-wider bg-amber-500/10 border border-amber-500/20 text-amber-400 font-sans">
+                            ⚡ Bulk Entry Mode
+                          </span>
+                        ) : (
+                          <span className="text-[9px] px-1.5 py-0.5 font-bold rounded uppercase tracking-wider bg-gray-500/10 border border-gray-500/20 text-gray-400">
+                            No Date Selected
+                          </span>
+                        )}
+                      </div>
+                    </div>
 
                     {!isReadingPlanner ? (
                       <>
