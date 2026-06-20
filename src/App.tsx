@@ -123,6 +123,7 @@ export default function App() {
   const [builderRemarks, setBuilderRemarks] = useState<string>("-");
   const [builderMultiDaySelect, setBuilderMultiDaySelect] = useState<boolean>(false);
   const [builderSelectedDays, setBuilderSelectedDays] = useState<number[]>([]);
+  const [lastSelectedDay, setLastSelectedDay] = useState<number | null>(null);
   
   // --- Smart Book Reading Planner States ---
   const [isReadingPlanner, setIsReadingPlanner] = useState<boolean>(false);
@@ -134,6 +135,7 @@ export default function App() {
   const [plannerDescriptionStyle, setPlannerDescriptionStyle] = useState<string>("standard");
   const [plannerCollisionResolution, setPlannerCollisionResolution] = useState<'skip' | 'overwrite' | 'parallel'>('parallel');
   const [plannerPreviewPlan, setPlannerPreviewPlan] = useState<any[] | null>(null);
+  const [autoRegenerateDescriptions, setAutoRegenerateDescriptions] = useState<boolean>(false);
   
   // Multi-book queue
   const [plannerBookQueue, setPlannerBookQueue] = useState<Array<{title: string; startPage: string; endPage: string}>>([]);
@@ -1158,6 +1160,133 @@ export default function App() {
     if (skipCount > 0) message += ` Skipped ${skipCount} colliding entries.`;
     
     triggerAlert("Logbook Populated", message);
+  };
+
+  const updateDescriptionPageRange = (description: string, rText: string): string => {
+    const pageRegex = /\(([Pp]p\.\s*[^)]+|None)\)/g;
+    if (pageRegex.test(description)) {
+      return description.replace(pageRegex, `(${rText})`);
+    }
+    const plainPpRegex = /[Pp]p\.\s*[0-9]+[^. \t\n]*([-–—to\s]+[0-9]+[^. \t\n]*)?/g;
+    if (plainPpRegex.test(description)) {
+      return description.replace(plainPpRegex, rText);
+    }
+    return `${description.trim()} (${rText})`;
+  };
+
+  const handleAdjustExistingReadingPages = () => {
+    const sortedDays = [...builderSelectedDays].sort((a, b) => a - b);
+    const daysCount = sortedDays.length;
+    if (daysCount === 0) {
+      triggerAlert("Selection Error", "Please select targeted calendar days from the multi-day grid first!");
+      return;
+    }
+
+    const monthStr = String(selectedMonth + 1).padStart(2, '0');
+    const targetDates = sortedDays.map(d => `${selectedYear}-${monthStr}-${String(d).padStart(2, '0')}`);
+
+    // Fetch existing "Reading" entries on these days
+    const existingReadingEntries = entries.filter(e => 
+      targetDates.includes(e.date) && e.activityType === "Reading"
+    );
+
+    const K = existingReadingEntries.length;
+    if (K === 0) {
+      triggerAlert("Validation Notice", `No existing "Reading" logs found for selected days (${sortedDays.join(', ')}). Formulate or convert entries to "Reading" first!`);
+      return;
+    }
+
+    // Build effective books
+    const effectiveBooks = [...plannerBookQueue];
+    if (plannerBookTitle.trim()) {
+      effectiveBooks.push({ title: plannerBookTitle, startPage: plannerStartPage, endPage: plannerEndPage });
+    }
+
+    if (effectiveBooks.length === 0) {
+      triggerAlert("Validation Notice", "Please enter a book/resource title or add books to the queue to specify pages to redistribute!");
+      return;
+    }
+
+    // Generate list of pages
+    const allPagesWithBook: Array<{pageLabel: string; book: string; pageIndex: number}> = [];
+    let globalIndex = 0;
+    for (const book of effectiveBooks) {
+      const generated = generatePageRange(String(book.startPage), String(book.endPage));
+      for (const pLabel of generated) {
+        allPagesWithBook.push({ pageLabel: pLabel, book: book.title, pageIndex: globalIndex++ });
+      }
+    }
+
+    const excluded = parseExclusions(plannerExcludePages);
+    const validPagesWithBook = allPagesWithBook.filter(p => {
+      const labelLower = p.pageLabel.toLowerCase();
+      if (excluded.has(labelLower)) return false;
+      const words = labelLower.split(/\s+/);
+      for (const w of words) {
+        if (excluded.has(w)) return false;
+      }
+      return true;
+    });
+
+    const N = validPagesWithBook.length;
+    const validPages = validPagesWithBook.map(p => p.pageLabel);
+
+    if (N === 0) {
+      triggerAlert("Calculation Error", "No pages to read! Exclusions filtered out your entire page range.");
+      return;
+    }
+
+    // Sort chronologically
+    const sortedExisting = [...existingReadingEntries].sort((a, b) => {
+      if (a.date !== b.date) {
+        return a.date.localeCompare(b.date);
+      }
+      return a.timeSlot.localeCompare(b.timeSlot);
+    });
+
+    // Redistribute validPages across K slots
+    let curr = 0;
+    const updatedEntriesMap = new Map<string, LogEntry>();
+
+    const getBookForSlice = (startIdx: number, count: number): string => {
+      if (count === 0 || effectiveBooks.length <= 1) return effectiveBooks[0]?.title || 'assigned text';
+      const slice = validPagesWithBook.slice(startIdx, startIdx + count);
+      const bookCounts: Record<string, number> = {};
+      for (const p of slice) {
+        bookCounts[p.book] = (bookCounts[p.book] || 0) + 1;
+      }
+      return Object.entries(bookCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || effectiveBooks[0].title;
+    };
+
+    for (let i = 0; i < K; i++) {
+      const oldEntry = sortedExisting[i];
+      const size = Math.floor(N / K) + (i < (N % K) ? 1 : 0);
+      const slotPages = validPages.slice(curr, curr + size);
+      const rText = formatPageRanges(slotPages);
+      const bookTitle = getBookForSlice(curr, size);
+      curr += size;
+
+      let newRemarks = slotPages.length > 0 ? rText : "-";
+      let newDescription = oldEntry.description;
+
+      if (autoRegenerateDescriptions) {
+        const isSlot2 = oldEntry.timeSlot === slot2Hours;
+        newDescription = generatePlannerDescription(bookTitle, rText, plannerDescriptionStyle, isSlot2);
+      } else {
+        // Update in-place
+        newDescription = updateDescriptionPageRange(oldEntry.description, rText);
+      }
+
+      updatedEntriesMap.set(oldEntry.id, {
+        ...oldEntry,
+        remarks: newRemarks,
+        description: newDescription
+      });
+    }
+
+    // Update state
+    setEntries(prev => prev.map(e => updatedEntriesMap.has(e.id) ? updatedEntriesMap.get(e.id)! : e));
+    triggerAlert("Pages Redistributed", `Successfully redistributed ${N} pages across ${K} existing Reading entries. Log descriptions updated!`);
   };
 
   // Feature-rich customized log entry creator supporting multiple days & collision awareness
@@ -2805,10 +2934,32 @@ export default function App() {
                               <button
                                 key={day}
                                 type="button"
-                                onClick={() => {
-                                  setBuilderSelectedDays(prev => 
-                                    prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-                                  );
+                                onClick={(e) => {
+                                  if (e.shiftKey && lastSelectedDay !== null) {
+                                    const start = Math.min(lastSelectedDay, day);
+                                    const end = Math.max(lastSelectedDay, day);
+                                    const rangeDays: number[] = [];
+                                    for (let d = start; d <= end; d++) {
+                                      const dObj = new Date(selectedYear, selectedMonth, d);
+                                      if (getDayStatus(dObj, holidays, true, true).isWorkingDay) {
+                                        rangeDays.push(d);
+                                      }
+                                    }
+                                    setBuilderSelectedDays(prev => {
+                                      const alreadyHasAll = rangeDays.every(d => prev.includes(d));
+                                      if (alreadyHasAll) {
+                                        return prev.filter(d => !rangeDays.includes(d));
+                                      } else {
+                                        const newSet = new Set([...prev, ...rangeDays]);
+                                        return Array.from(newSet);
+                                      }
+                                    });
+                                  } else {
+                                    setBuilderSelectedDays(prev => 
+                                      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                                    );
+                                  }
+                                  setLastSelectedDay(day);
                                 }}
                                 className={`h-8 font-mono rounded-lg text-[10px] transition-all flex flex-col items-center justify-center relative ${
                                   isSelected 
@@ -3257,6 +3408,44 @@ export default function App() {
                               <option value="overwrite">💥 destructive overwrite existing logs</option>
                               <option value="skip">🚯 skip days with existing logs</option>
                             </select>
+                          </div>
+                        </div>
+
+                        {/* Dynamic Redistribution Refinement Panel */}
+                        <div className="border border-blue-500/10 bg-blue-500/5 rounded-xl p-3.5 space-y-3">
+                          <div className="flex items-center gap-1.5 border-b border-blue-550/20 pb-1.5">
+                            <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" style={{ animationDuration: '6s' }} />
+                            <span className="font-bold text-[10px] text-blue-400 uppercase tracking-wider">
+                              🔄 Existing Entries Elastic Redistribution
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 leading-relaxed">
+                            Already populated reading logs for certain days but read additional text? Select those dates in the calendar grid, adjust the Start/End page configs above, and apply this redistribution tool. The app will contextually stretch or condense the pages across those same slots.
+                          </p>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                            {/* Toggle */}
+                            <label className="flex items-center gap-2 text-gray-300 hover:text-white cursor-pointer select-none">
+                              <input 
+                                type="checkbox"
+                                checked={autoRegenerateDescriptions}
+                                onChange={(e) => setAutoRegenerateDescriptions(e.target.checked)}
+                                className="rounded bg-[#101216] border-[#2A2D35] text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
+                              />
+                              <span className="text-[10px] font-medium font-sans">
+                                Overwrite description text using style vocabulary
+                              </span>
+                            </label>
+
+                            {/* Button */}
+                            <button
+                              type="button"
+                              onClick={handleAdjustExistingReadingPages}
+                              className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold px-3 py-1.5 border-none rounded-lg text-[10px] sm:text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-900/40 transition-all cursor-pointer min-h-[30px]"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Redistribute Pages on Existing Logs</span>
+                            </button>
                           </div>
                         </div>
 
