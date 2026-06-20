@@ -142,6 +142,8 @@ export default function App() {
   
   // Bulk Selection State
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+  const [showRedistributeDialog, setShowRedistributeDialog] = useState<boolean>(false);
+  const [showBulkActivityDropdown, setShowBulkActivityDropdown] = useState<boolean>(false);
 
   // --- Undo/Redo History ---
   const [undoStack, setUndoStack] = useState<LogEntry[][]>([]);
@@ -1174,21 +1176,15 @@ export default function App() {
     return `${description.trim()} (${rText})`;
   };
 
-  const handleAdjustExistingReadingPages = () => {
-    const sortedDays = [...builderSelectedDays].sort((a, b) => a - b);
-    const daysCount = sortedDays.length;
-    if (daysCount === 0) {
-      triggerAlert("Selection Error", "Please select targeted calendar days from the multi-day grid first!");
+  const handleAdjustExistingReadingPages = (targetEntriesInput?: LogEntry[]) => {
+    const targetEntries = targetEntriesInput || entries.filter(e => selectedEntryIds.includes(e.id));
+    
+    if (targetEntries.length === 0) {
+      triggerAlert("Selection Error", "Please select targeted entries first!");
       return;
     }
 
-    const monthStr = String(selectedMonth + 1).padStart(2, '0');
-    const targetDates = sortedDays.map(d => `${selectedYear}-${monthStr}-${String(d).padStart(2, '0')}`);
-
-    // Fetch existing "Reading" or empty template entries on these days
-    const entriesOnTheseDays = entries.filter(e => targetDates.includes(e.date));
-
-    const existingReadingEntries = entriesOnTheseDays.filter(e => {
+    const existingReadingEntries = targetEntries.filter(e => {
       const act = (e.activityType || "").trim().toLowerCase();
       return act === "reading" || 
              act.includes("reading") || 
@@ -1200,20 +1196,11 @@ export default function App() {
 
     const K = existingReadingEntries.length;
     if (K === 0) {
-      if (entriesOnTheseDays.length > 0) {
-        const existingDetails = entriesOnTheseDays.map(e => `Day ${e.date.split('-')[2]} (${e.timeSlot}): "${e.activityType}"`).join('\n');
-        triggerAlert(
-          "No Reading Slots Found", 
-          `We found ${entriesOnTheseDays.length} entry/entries on selected day(s) ${sortedDays.join(', ')} for ${selectedMonthName} ${selectedYear}, but none are classified as "Reading":\n\n${existingDetails}\n\nPlease verify or convert those slots to "Reading" first!`
-        );
-      } else {
-        const matchingTrailingDay = entries.filter(e => e.date.endsWith(`-${String(sortedDays[0]).padStart(2, '0')}`));
-        const otherDateDetails = matchingTrailingDay.map(e => `${e.date} (${e.activityType})`).join('\n') || 'None';
-        triggerAlert(
-          "No Entries Found", 
-          `No existing log entries of any type were found on date(s): ${targetDates.join(', ')}.\n\nAll entries in database ending in Day ${String(sortedDays[0]).padStart(2, '0')} across other months/years:\n${otherDateDetails}`
-        );
-      }
+      const details = targetEntries.map(e => `Day ${e.date.split('-')[2]} (${e.timeSlot || ""}): "${e.activityType || "unclassified"}"`).join('\n');
+      triggerAlert(
+        "No Reading Slots Found", 
+        `None of the ${targetEntries.length} selected entries are classified as "Reading" or empty templates:\n\n${details}\n\nPlease convert/set their activity to "Reading" first to redistribute pages!`
+      );
       return;
     }
 
@@ -1309,6 +1296,107 @@ export default function App() {
     // Update state
     setEntries(prev => prev.map(e => updatedEntriesMap.has(e.id) ? updatedEntriesMap.get(e.id)! : e));
     triggerAlert("Pages Redistributed", `Successfully redistributed ${N} pages across ${K} existing Reading entries. Log descriptions updated!`);
+    setShowRedistributeDialog(false);
+  };
+
+  const getDialogRedistributionPreview = () => {
+    const targetEntries = entries.filter(e => selectedEntryIds.includes(e.id));
+    const existingReadingEntries = targetEntries.filter(e => {
+      const act = (e.activityType || "").trim().toLowerCase();
+      return act === "reading" || 
+             act.includes("reading") || 
+             act.includes("read") || 
+             act === "study" || 
+             act === "" || 
+             !e.activityType;
+    });
+
+    const K = existingReadingEntries.length;
+    if (K === 0) return null;
+
+    // Build effective books
+    const effectiveBooks = [...plannerBookQueue];
+    if (plannerBookTitle.trim()) {
+      effectiveBooks.push({ title: plannerBookTitle, startPage: plannerStartPage, endPage: plannerEndPage });
+    }
+
+    if (effectiveBooks.length === 0) return null;
+
+    // Generate list of pages
+    const allPagesWithBook: Array<{pageLabel: string; book: string; pageIndex: number}> = [];
+    let globalIndex = 0;
+    for (const book of effectiveBooks) {
+      const generated = generatePageRange(String(book.startPage), String(book.endPage));
+      for (const pLabel of generated) {
+        allPagesWithBook.push({ pageLabel: pLabel, book: book.title, pageIndex: globalIndex++ });
+      }
+    }
+
+    const excluded = parseExclusions(plannerExcludePages);
+    const validPagesWithBook = allPagesWithBook.filter(p => {
+      const labelLower = p.pageLabel.toLowerCase();
+      if (excluded.has(labelLower)) return false;
+      const words = labelLower.split(/\s+/);
+      for (const w of words) {
+        if (excluded.has(w)) return false;
+      }
+      return true;
+    });
+
+    const N = validPagesWithBook.length;
+    const validPages = validPagesWithBook.map(p => p.pageLabel);
+    if (N === 0) return null;
+
+    // Sort chronologically
+    const sortedExisting = [...existingReadingEntries].sort((a, b) => {
+      if (a.date !== b.date) {
+        return a.date.localeCompare(b.date);
+      }
+      return a.timeSlot.localeCompare(b.timeSlot);
+    });
+
+    // Distribute
+    let curr = 0;
+    const previewList: Array<{id: string; date: string; timeSlot: string; pagesText: string; description: string}> = [];
+
+    const getBookForSlice = (startIdx: number, count: number): string => {
+      if (count === 0 || effectiveBooks.length <= 1) return effectiveBooks[0]?.title || 'assigned text';
+      const slice = validPagesWithBook.slice(startIdx, startIdx + count);
+      const bookCounts: Record<string, number> = {};
+      for (const p of slice) {
+        bookCounts[p.book] = (bookCounts[p.book] || 0) + 1;
+      }
+      return Object.entries(bookCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || effectiveBooks[0].title;
+    };
+
+    for (let i = 0; i < K; i++) {
+      const oldEntry = sortedExisting[i];
+      const size = Math.floor(N / K) + (i < (N % K) ? 1 : 0);
+      const slotPages = validPages.slice(curr, curr + size);
+      const rText = formatPageRanges(slotPages);
+      const bookTitle = getBookForSlice(curr, size);
+      curr += size;
+
+      let newRemarks = slotPages.length > 0 ? rText : "-";
+      let newDescription = oldEntry.description;
+
+      if (autoRegenerateDescriptions) {
+        const isSlot2 = oldEntry.timeSlot === slot2Hours;
+        newDescription = generatePlannerDescription(bookTitle, rText, plannerDescriptionStyle, isSlot2);
+      } else {
+        newDescription = updateDescriptionPageRange(oldEntry.description, rText);
+      }
+
+      previewList.push({
+        id: oldEntry.id,
+        date: oldEntry.date,
+        timeSlot: oldEntry.timeSlot,
+        pagesText: newRemarks,
+        description: newDescription
+      });
+    }
+
+    return previewList;
   };
 
   // Feature-rich customized log entry creator supporting multiple days & collision awareness
@@ -3433,44 +3521,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Dynamic Redistribution Refinement Panel */}
-                        <div className="border border-blue-500/10 bg-blue-500/5 rounded-xl p-3.5 space-y-3">
-                          <div className="flex items-center gap-1.5 border-b border-blue-550/20 pb-1.5">
-                            <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" style={{ animationDuration: '6s' }} />
-                            <span className="font-bold text-[10px] text-blue-400 uppercase tracking-wider">
-                              🔄 Existing Entries Elastic Redistribution
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-gray-400 leading-relaxed">
-                            Already populated reading logs for certain days but read additional text? Select those dates in the calendar grid, adjust the Start/End page configs above, and apply this redistribution tool. The app will contextually stretch or condense the pages across those same slots.
-                          </p>
-
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-                            {/* Toggle */}
-                            <label className="flex items-center gap-2 text-gray-300 hover:text-white cursor-pointer select-none">
-                              <input 
-                                type="checkbox"
-                                checked={autoRegenerateDescriptions}
-                                onChange={(e) => setAutoRegenerateDescriptions(e.target.checked)}
-                                className="rounded bg-[#101216] border-[#2A2D35] text-blue-500 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5"
-                              />
-                              <span className="text-[10px] font-medium font-sans">
-                                Overwrite description text using style vocabulary
-                              </span>
-                            </label>
-
-                            {/* Button */}
-                            <button
-                              type="button"
-                              onClick={handleAdjustExistingReadingPages}
-                              className="bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold px-3 py-1.5 border-none rounded-lg text-[10px] sm:text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-900/40 transition-all cursor-pointer min-h-[30px]"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              <span>Redistribute Pages on Existing Logs</span>
-                            </button>
-                          </div>
-                        </div>
-
                         {/* Actions to Preview vs Submit */}
                         <div className="flex flex-wrap gap-2.5 pt-1.5">
                           <button
@@ -3539,45 +3589,75 @@ export default function App() {
 
             {/* Bulk Actions Toolbar */}
             {selectedEntryIds.length > 0 && (
-              <div className="bg-blue-600/10 border-b border-blue-500/20 p-3 flex items-center justify-between animate-in fade-in slide-in-from-top-2">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">{selectedEntryIds.length} Selected</span>
-                  <div className="h-4 w-px bg-blue-500/30"></div>
+              <div className="sticky top-[56px] lg:top-[64px] z-30 bg-[#15171c]/95 backdrop-blur-md border-b-2 border-blue-500/40 p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xl animate-in fade-in slide-in-from-top-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xs font-bold text-blue-400 uppercase tracking-wider bg-blue-500/10 px-2 py-1 rounded-md">{selectedEntryIds.length} Selected</span>
+                  <div className="hidden sm:block h-5 w-px bg-gray-700"></div>
+
                   <button 
                     onClick={handleBulkDelete}
-                    className="text-[10px] bg-red-600/10 hover:bg-red-600/20 text-red-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5"
+                    className="text-[10px] bg-red-600/10 hover:bg-red-600/20 text-red-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     Delete Selected
                   </button>
-                  <div className="relative group">
-                    <button className="text-[10px] bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5">
+
+                  <div className="relative">
+                    <button 
+                      onClick={() => setShowBulkActivityDropdown(!showBulkActivityDropdown)}
+                      className="text-[10px] bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 cursor-pointer select-none"
+                    >
                       <Sparkles className="w-3.5 h-3.5" />
-                      Set Activity
+                      <span>Set Activity</span>
+                      <ChevronDown className="w-3 h-3" />
                     </button>
-                    <div className="absolute left-0 top-full mt-1 hidden group-hover:flex flex-col bg-[#1C1F26] border border-[#2A2D35] rounded-md shadow-xl overflow-hidden z-20 w-40">
-                      {["Reading", "Mentoring", "Department Work", "Leave", "Other Work"].map(act => (
-                        <button 
-                          key={act}
-                          onClick={() => handleBulkUpdateActivity(act)}
-                          className="text-[10px] text-left px-3 py-2 text-gray-300 hover:bg-[#2A2D35] hover:text-white transition-colors"
-                        >
-                          {act}
-                        </button>
-                      ))}
-                    </div>
+                    {showBulkActivityDropdown && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-10" 
+                          onClick={() => setShowBulkActivityDropdown(false)}
+                        />
+                        <div className="absolute left-0 top-full mt-1.5 flex flex-col bg-[#1C1F26] border border-[#2A2D35] rounded-md shadow-2xl overflow-hidden z-20 w-40 animate-in fade-in zoom-in-95">
+                          {["Reading", "Mentoring", "Department Work", "Leave", "Other Work"].map(act => (
+                            <button 
+                              key={act}
+                              type="button"
+                              onClick={() => {
+                                handleBulkUpdateActivity(act);
+                                setShowBulkActivityDropdown(false);
+                              }}
+                              className="text-[10px] text-left px-3 py-2 text-gray-300 hover:bg-[#2A2D35] hover:text-white transition-colors cursor-pointer"
+                            >
+                              {act}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
+
                   <button 
                     onClick={handleBulkDuplicate}
-                    className="text-[10px] bg-violet-600/10 hover:bg-violet-600/20 text-violet-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5"
+                    className="text-[10px] bg-violet-600/10 hover:bg-violet-600/20 text-violet-400 px-2.5 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     Duplicate
                   </button>
+
+                  <button 
+                    onClick={() => setShowRedistributeDialog(true)}
+                    className="text-[10px] bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-300 px-2.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Elastic Page Redistribution
+                  </button>
                 </div>
+
                 <button 
-                  onClick={() => setSelectedEntryIds([])}
-                  className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors uppercase tracking-wider font-semibold"
+                  onClick={() => {
+                    setSelectedEntryIds([]);
+                  }}
+                  className="text-[10px] text-gray-400 hover:text-gray-200 transition-colors uppercase tracking-wider font-semibold cursor-pointer bg-gray-800/20 hover:bg-gray-800/40 px-2.5 py-1.5 rounded-md"
                 >
                   Clear Selection
                 </button>
@@ -3907,6 +3987,180 @@ export default function App() {
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-all font-semibold"
               >
                 {modalConfig.confirmLabel || "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Elastic Page Redistribution Dialog Modal (IFrame Friendly) --- */}
+      {showRedistributeDialog && selectedEntryIds.length > 0 && (
+        <div id="elastic-redistribution-modal" className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-[#15171C] border border-blue-500/30 rounded-2xl max-w-2xl w-full shadow-2xl p-6 my-8 space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-[#2A2D35] pb-3">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" style={{ animationDuration: '8s' }} />
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider font-display">
+                    Elastic Page Redistribution
+                  </h3>
+                  <p className="text-[10px] text-gray-400">
+                    Apply page parameters across your selected {selectedEntryIds.length} log entry/entries.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowRedistributeDialog(false)}
+                className="text-gray-500 hover:text-white transition-colors p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Book or Resource Title</label>
+                <input 
+                  type="text"
+                  value={plannerBookTitle}
+                  onChange={(e) => setPlannerBookTitle(e.target.value)}
+                  placeholder="e.g. Advanced Nanomaterials Vol 2"
+                  className="w-full bg-[#101216] border border-[#2A2D35] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Description Style Vocabulary</label>
+                <select
+                  value={plannerDescriptionStyle}
+                  onChange={(e) => setPlannerDescriptionStyle(e.target.value)}
+                  className="w-full bg-[#101216] border border-[#2A2D35] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 font-sans cursor-pointer"
+                >
+                  <option value="standard">Standard Scholar Description</option>
+                  <option value="academic">Academic & Advanced</option>
+                  <option value="analytical">Analytical Research & Quantitative</option>
+                  <option value="detailed">In-depth Exhaustive Summary</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Start Page</label>
+                  <input 
+                    type="number"
+                    value={plannerStartPage}
+                    onChange={(e) => setPlannerStartPage(e.target.value)}
+                    className="w-full bg-[#101216] border border-[#2A2D35] rounded-lg px-3 py-1.5 text-xs text-white text-center focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">End Page</label>
+                  <input 
+                    type="number"
+                    value={plannerEndPage}
+                    onChange={(e) => setPlannerEndPage(e.target.value)}
+                    className="w-full bg-[#101216] border border-[#2A2D35] rounded-lg px-3 py-1.5 text-xs text-white text-center focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exclusions (comma-separated)</label>
+                <input 
+                  type="text"
+                  value={plannerExcludePages}
+                  onChange={(e) => setPlannerExcludePages(e.target.value)}
+                  placeholder="e.g. 12, 18, index, notes"
+                  className="w-full bg-[#101216] border border-[#2A2D35] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+            </div>
+
+            {/* Toggle Overwrite */}
+            <div className="bg-[#101216] p-3 rounded-lg border border-[#2A2D35] flex items-center gap-3">
+              <input 
+                type="checkbox"
+                id="modal-auto-regen"
+                checked={autoRegenerateDescriptions}
+                onChange={(e) => setAutoRegenerateDescriptions(e.target.checked)}
+                className="rounded bg-[#1A1D24] border-[#2A2D35] text-blue-500 focus:ring-0 focus:ring-offset-0 w-4 h-4 cursor-pointer"
+              />
+              <label htmlFor="modal-auto-regen" className="text-xs text-gray-300 cursor-pointer select-none leading-tight font-sans">
+                <span className="font-semibold block text-white text-[11px]">Regenerate entire descriptions using chosen vocabulary style</span>
+                <span className="text-[10px] text-gray-400">If unchecked, the tool will update ONLY the page range figures in-tact within your existing summaries (preserves custom descriptions perfectly!).</span>
+              </label>
+            </div>
+
+            {/* Live Interactive Preview */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center gap-1">
+                  📊 Real-Time Distribution Roadmap
+                </span>
+                <span className="text-[9px] text-gray-500 font-mono">
+                  Calculated automatically based on active page outputs
+                </span>
+              </div>
+
+              {(() => {
+                const preview = getDialogRedistributionPreview();
+                if (!preview || preview.length === 0) {
+                  return (
+                    <div className="border border-yellow-500/20 bg-yellow-500/5 text-yellow-300/90 text-[11px] p-3.5 rounded-xl font-sans leading-relaxed">
+                      ⚠️ <strong>No compatible slot previews available!</strong> To perform distribution, ensure your book parameters are correct, and that your selection contains entries set as <strong>"Reading"</strong> or are <strong>empty template slots</strong>. If they are marked as Leave or Mentoring, convert/set them to Reading using the Bulk Set Activity dropdown on the toolbar first.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="border border-blue-500/10 rounded-xl p-3 bg-[#101216] text-xs space-y-2 max-h-[160px] overflow-y-auto font-sans">
+                    <div className="space-y-1.5 font-mono text-[10px]">
+                      {preview.map((p, idx) => (
+                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between bg-blue-950/20 border border-blue-500/10 p-2 rounded-lg gap-1.5 transition-all">
+                          <span className="text-gray-300 font-bold whitespace-nowrap">
+                            📅 Day {p.date.split('-')[2]} ({p.timeSlot})
+                          </span>
+                          <span className="text-blue-300 font-bold bg-blue-500/15 px-1.5 py-0.5 rounded text-[10px] text-center border border-blue-500/20 max-w-full truncate">
+                            {p.pagesText}
+                          </span>
+                          <span className="text-gray-400 italic text-[10.5px] line-clamp-1 max-w-[240px] truncate">
+                            {p.description}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2 text-xs border-t border-[#2A2D35]/50">
+              <button
+                type="button"
+                onClick={() => setShowRedistributeDialog(false)}
+                className="px-4 py-2 rounded-lg bg-[#2A2D35] text-gray-300 hover:bg-[#343842] hover:text-white transition-all font-semibold cursor-pointer select-none"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleAdjustExistingReadingPages();
+                  // Automatically clear selection after successful distribution so they can proceed with normal operations
+                  setSelectedEntryIds([]);
+                }}
+                disabled={!getDialogRedistributionPreview()}
+                className={`px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
+                  getDialogRedistributionPreview()
+                    ? 'bg-blue-600 hover:bg-blue-700 active:scale-95 text-white shadow-md shadow-blue-500/20'
+                    : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-[#2A2D35]'
+                }`}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Apply Elastic Redistribution
               </button>
             </div>
           </div>
