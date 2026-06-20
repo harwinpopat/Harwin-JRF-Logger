@@ -1185,14 +1185,15 @@ export default function App() {
     const monthStr = String(selectedMonth + 1).padStart(2, '0');
     const targetDates = sortedDays.map(d => `${selectedYear}-${monthStr}-${String(d).padStart(2, '0')}`);
 
-    // Fetch existing "Reading" entries on these days
+    // Fetch existing "Reading" or empty template entries on these days
     const existingReadingEntries = entries.filter(e => 
-      targetDates.includes(e.date) && e.activityType === "Reading"
+      targetDates.includes(e.date) && 
+      (e.activityType === "Reading" || e.activityType === "" || !e.activityType)
     );
 
     const K = existingReadingEntries.length;
     if (K === 0) {
-      triggerAlert("Validation Notice", `No existing "Reading" logs found for selected days (${sortedDays.join(', ')}). Formulate or convert entries to "Reading" first!`);
+      triggerAlert("Validation Notice", `No existing Reading or empty slots found for selected days (${sortedDays.join(', ')}). Formulate or convert entries to "Reading" first!`);
       return;
     }
 
@@ -1279,6 +1280,7 @@ export default function App() {
 
       updatedEntriesMap.set(oldEntry.id, {
         ...oldEntry,
+        activityType: "Reading",
         remarks: newRemarks,
         description: newDescription
       });
